@@ -39,6 +39,7 @@ var (
 	tPackage int = 6
 	tVar     int = 7
 	tFunc    int = 8
+	tReturn  int = 9
 
 	// Single-character tokens
 	tPlus      int = '+'
@@ -53,6 +54,8 @@ var (
 	tComma     int = ','
 	tLBrace    int = '{'
 	tRBrace    int = '}'
+	tLBracket  int = '['
+	tRBracket  int = ']'
 )
 
 func nextChar() {
@@ -84,6 +87,16 @@ func isAlpha(ch int) bool {
 func nextToken() {
 	// Skip whitespace
 	for c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+		if c == '\n' {
+			// Semicolon insertion: https://golang.org/ref/spec#Semicolons
+			if token == tIdent || token == tIntLit || token == tStrLit ||
+				token == tReturn || token == tRParen || token == tRBracket ||
+				token == tRBrace {
+				nextChar()
+				token = tSemicolon
+				return
+			}
+		}
 		nextChar()
 	}
 	if c < 0 {
@@ -196,6 +209,10 @@ func nextToken() {
 			token = tFunc
 			return
 		}
+		if strToken == "return" {
+			token = tReturn
+			return
+		}
 		// Otherwise it's an identifier
 		token = tIdent
 		return
@@ -203,7 +220,8 @@ func nextToken() {
 
 	// Single-character tokens (token is ASCII value)
 	if c == '+' || c == '-' || c == '*' || c == '/' || c == ';' || c == '=' ||
-		c == '(' || c == ')' || c == '!' || c == ',' || c == '{' || c == '}' {
+		c == '(' || c == ')' || c == '!' || c == ',' || c == '{' || c == '}' ||
+		c == '[' || c == ']' {
 		token = c
 		nextChar()
 		return
@@ -225,7 +243,11 @@ func nextToken() {
 
 func expect(expected int, msg string) {
 	if token != expected {
-		error("expected " + msg + " (not token " + intStr(token) + ")")
+		if token > ' ' {
+			error("expected " + msg + " - not " + charStr(token))
+		} else {
+			error("expected " + msg + " - not token " + intStr(token))
+		}
 	}
 	nextToken()
 }
@@ -381,7 +403,9 @@ func Parameters() {
 
 func Signature() {
 	Parameters()
-	//	optionalResult()
+	if token != tLBrace {
+		Type()
+	}
 }
 
 func Statement() {
