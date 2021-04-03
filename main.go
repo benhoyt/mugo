@@ -55,6 +55,7 @@ var (
 	tMinus     int = '-'
 	tTimes     int = '*'
 	tDivide    int = '/'
+	tModulo    int = '%'
 	tComma     int = ','
 	tSemicolon int = ';'
 	tAssign    int = '='
@@ -229,7 +230,7 @@ func nextToken() {
 	}
 
 	// Single-character tokens (token is ASCII value)
-	if c == '+' || c == '-' || c == '*' || c == '/' || c == ';' || c == ',' ||
+	if c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == ';' || c == ',' ||
 		c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']' {
 		token = c
 		nextChar()
@@ -293,34 +294,55 @@ func nextToken() {
 	error("unexpected '" + charStr(c) + "'")
 }
 
+func tokenStr(t int) string {
+	if t < 0 {
+		return "EOF"
+	} else if t > ' ' {
+		return charStr(t)
+	} else if t == tIf {
+		return "\"if\""
+	} else if t == tElse {
+		return "\"else\""
+	} else if t == tFor {
+		return "\"for\""
+	} else if t == tVar {
+		return "\"var\""
+	} else if t == tFunc {
+		return "\"func\""
+	} else if t == tReturn {
+		return "\"return\""
+	} else if t == tPackage {
+		return "\"package\""
+	} else if t == tIntLit {
+		return "integer literal"
+	} else if t == tStrLit {
+		return "string literal"
+	} else if t == tIdent {
+		return "identifier"
+	} else if t == tOr {
+		return "||"
+	} else if t == tAnd {
+		return "&&"
+	} else if t == tEq {
+		return "=="
+	} else if t == tNotEq {
+		return "!="
+	} else if t == tLessEq {
+		return "<="
+	} else if t == tGreaterEq {
+		return ">="
+	} else if t == tDeclAssign {
+		return ":="
+	} else {
+		return "unknown token " + intStr(t)
+	}
+}
+
 func expect(expected int, msg string) {
 	if token != expected {
-		if token > ' ' {
-			error("expected " + msg + " not " + charStr(token))
-		} else {
-			error("expected " + msg + " not token " + intStr(token))
-		}
+		error("expected " + msg + " not " + tokenStr(token))
 	}
 	nextToken()
-}
-
-func intLit() {
-	print(intStr(intToken))
-	expect(tIntLit, "integer literal")
-}
-
-func factor() {
-	intLit()
-}
-
-func term() {
-	factor()
-	for token == tTimes || token == tDivide {
-		op := token
-		nextToken()
-		factor()
-		print(charStr(op))
-	}
 }
 
 func quoteStr(s string) string {
@@ -347,7 +369,9 @@ func Operand() {
 		identifier("identifier")
 	} else if token == tLParen {
 		nextToken()
+		print("(")
 		Expression()
+		print(")")
 		expect(tRParen, ")")
 	} else {
 		error("expected literal, identifier, or (expression)")
@@ -360,7 +384,7 @@ func PrimaryExpr() {
 
 func UnaryExpr() {
 	if token == tPlus || token == tMinus || token == tNot {
-		print(charStr(token))
+		print(tokenStr(token))
 		nextToken()
 		UnaryExpr()
 		return
@@ -370,28 +394,52 @@ func UnaryExpr() {
 
 func mulExpr() {
 	UnaryExpr()
-	for token == tTimes || token == tDivide {
-		print(charStr(token))
+	for token == tTimes || token == tDivide || token == tModulo {
+		print(" " + tokenStr(token) + " ")
 		nextToken()
 		UnaryExpr()
 	}
 }
 
-func binaryExpr() {
+func addExpr() {
 	mulExpr()
 	for token == tPlus || token == tMinus {
-		print(charStr(token))
+		print(" " + tokenStr(token) + " ")
 		nextToken()
 		mulExpr()
 	}
 }
 
-func Expression() {
-	if token == tPlus || token == tMinus || token == tNot {
-		UnaryExpr()
-	} else {
-		binaryExpr()
+func comparisonExpr() {
+	addExpr()
+	for token == tEq || token == tNotEq || token == tLess || token == tLessEq ||
+		token == tGreater || token == tGreaterEq {
+		print(" " + tokenStr(token) + " ")
+		nextToken()
+		addExpr()
 	}
+}
+
+func andExpr() {
+	comparisonExpr()
+	for token == tAnd {
+		print(" " + tokenStr(token) + " ")
+		nextToken()
+		comparisonExpr()
+	}
+}
+
+func orExpr() {
+	andExpr()
+	for token == tOr {
+		print(" " + tokenStr(token) + " ")
+		nextToken()
+		andExpr()
+	}
+}
+
+func Expression() {
+	orExpr()
 }
 
 func identifier(msg string) {
