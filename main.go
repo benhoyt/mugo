@@ -8,10 +8,6 @@ package main
 
 // types: T = byte int string []byte
 // - maybe? []T [n]T map[string]T struct *ptr bool
-// keywords: else for func if package return
-// - maybe? break continue map range struct var
-// operators: + - * / % && || == < > = != <= >= :=
-// literals: 1234 "foo\nbar"
 // builtins: append cap copy len print println
 
 // parse and compile at once - can we pull this off?
@@ -31,27 +27,42 @@ var (
 var (
 	tEOF int = -1
 
-	tIntLit  int = 1
-	tFor     int = 2
-	tIdent   int = 3
-	tOr      int = 4
-	tStrLit  int = 5
-	tPackage int = 6
-	tVar     int = 7
-	tFunc    int = 8
-	tReturn  int = 9
+	// Keywords
+	tIf      int = 1
+	tElse    int = 2
+	tFor     int = 3
+	tVar     int = 4
+	tFunc    int = 5
+	tReturn  int = 6
+	tPackage int = 7
 
-	// Single-character tokens
+	// Literals and identifiers
+	tIntLit int = 8
+	tStrLit int = 9
+	tIdent  int = 10
+
+	// Two-character tokens
+	tOr         int = 11
+	tAnd        int = 12
+	tEq         int = 13
+	tNotEq      int = 14
+	tLessEq     int = 15
+	tGreaterEq  int = 16
+	tDeclAssign int = 17
+
+	// Single-character tokens (these use the ASCII value)
 	tPlus      int = '+'
 	tMinus     int = '-'
 	tTimes     int = '*'
 	tDivide    int = '/'
+	tComma     int = ','
 	tSemicolon int = ';'
-	tEquals    int = '='
+	tAssign    int = '='
+	tNot       int = '!'
+	tLess      int = '<'
+	tGreater   int = '>'
 	tLParen    int = '('
 	tRParen    int = ')'
-	tNot       int = '!'
-	tComma     int = ','
 	tLBrace    int = '{'
 	tRBrace    int = '}'
 	tLBracket  int = '['
@@ -82,6 +93,13 @@ func isDigit(ch int) bool {
 
 func isAlpha(ch int) bool {
 	return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z'
+}
+
+func expectChar(ch int) {
+	if c != ch {
+		error("expected '" + charStr(ch) + "' not '" + charStr(c) + "'")
+	}
+	nextChar()
 }
 
 func nextToken() {
@@ -141,9 +159,7 @@ func nextToken() {
 			intToken = c
 			nextChar()
 		}
-		if c != '\'' {
-			error("expected end '")
-		}
+		expectChar('\'')
 		nextChar()
 		token = tIntLit
 		return
@@ -175,9 +191,7 @@ func nextToken() {
 			strToken = strToken + charStr(c)
 			nextChar()
 		}
-		if c != '"' {
-			error("expected end \"")
-		}
+		expectChar('"')
 		nextChar()
 		token = tStrLit
 		return
@@ -193,49 +207,87 @@ func nextToken() {
 			nextChar()
 		}
 		// Check for keywords
-		if strToken == "for" {
+		if strToken == "if" {
+			token = tIf
+		} else if strToken == "else" {
+			token = tElse
+		} else if strToken == "for" {
 			token = tFor
-			return
-		}
-		if strToken == "package" {
-			token = tPackage
-			return
-		}
-		if strToken == "var" {
+		} else if strToken == "var" {
 			token = tVar
-			return
-		}
-		if strToken == "func" {
+		} else if strToken == "func" {
 			token = tFunc
-			return
-		}
-		if strToken == "return" {
+		} else if strToken == "return" {
 			token = tReturn
-			return
+		} else if strToken == "package" {
+			token = tPackage
+		} else {
+			// Otherwise it's an identifier
+			token = tIdent
 		}
-		// Otherwise it's an identifier
-		token = tIdent
 		return
 	}
 
 	// Single-character tokens (token is ASCII value)
-	if c == '+' || c == '-' || c == '*' || c == '/' || c == ';' || c == '=' ||
-		c == '(' || c == ')' || c == '!' || c == ',' || c == '{' || c == '}' ||
-		c == '[' || c == ']' {
+	if c == '+' || c == '-' || c == '*' || c == '/' || c == ';' || c == ',' ||
+		c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']' {
 		token = c
 		nextChar()
+		return
+	}
+
+	// One or two-character tokens
+	if c == '=' {
+		nextChar()
+		if c == '=' {
+			nextChar()
+			token = tEq
+		} else {
+			token = tAssign
+		}
+		return
+	} else if c == '<' {
+		nextChar()
+		if c == '=' {
+			nextChar()
+			token = tLessEq
+		} else {
+			token = tLess
+		}
+		return
+	} else if c == '>' {
+		nextChar()
+		if c == '=' {
+			nextChar()
+			token = tGreaterEq
+		} else {
+			token = tGreater
+		}
+		return
+	} else if c == '!' {
+		nextChar()
+		if c == '=' {
+			nextChar()
+			token = tNotEq
+		} else {
+			token = tNot
+		}
 		return
 	}
 
 	// Two-character tokens
 	if c == '|' {
 		nextChar()
-		if c == '|' {
-			nextChar()
-			token = tOr
-			return
-		}
-		error("unexpected '" + charStr(c) + "' after '|'")
+		expectChar('|')
+		token = tOr
+	} else if c == '&' {
+		nextChar()
+		expectChar('&')
+		token = tAnd
+	} else if c == ':' {
+		nextChar()
+		expectChar('=')
+		token = tDeclAssign
 	}
 
 	error("unexpected '" + charStr(c) + "'")
@@ -244,9 +296,9 @@ func nextToken() {
 func expect(expected int, msg string) {
 	if token != expected {
 		if token > ' ' {
-			error("expected " + msg + " - not " + charStr(token))
+			error("expected " + msg + " not " + charStr(token))
 		} else {
-			error("expected " + msg + " - not token " + intStr(token))
+			error("expected " + msg + " not token " + intStr(token))
 		}
 	}
 	nextToken()
@@ -291,6 +343,7 @@ func Operand() {
 	if token == tIntLit || token == tStrLit {
 		Literal()
 	} else if token == tIdent {
+		print(strToken)
 		identifier("identifier")
 	} else if token == tLParen {
 		nextToken()
@@ -362,7 +415,7 @@ func VarSpec() {
 	identifier("variable identifier")
 	typeName := strToken
 	Type()
-	expect(tEquals, "=")
+	expect(tAssign, "=")
 	print(typeName + " " + varName + " = ")
 	Expression()
 	print(";\n")
@@ -408,9 +461,61 @@ func Signature() {
 	}
 }
 
-func Statement() {
+// SimpleStmt = EmptyStmt | ExpressionStmt | SendStmt | IncDecStmt | Assignment | ShortVarDecl .
+func SimpleStmt() {
 	Expression() // TODO
 	print(";\n")
+}
+
+func ReturnStmt() {
+	expect(tReturn, "\"return\"")
+	print("return")
+	if token != tSemicolon {
+		print(" ")
+		Expression()
+	}
+	print(";\n")
+}
+
+func IfStmt() {
+	expect(tIf, "\"if\"")
+	print("if (")
+	Expression()
+	print(") ")
+	Block()
+	if token == tElse {
+		nextToken()
+		print(" else ")
+		if token == tIf {
+			IfStmt()
+		} else {
+			Block()
+		}
+	}
+}
+
+func ForStmt() {
+	expect(tFor, "\"for\"")
+	print("while (")
+	Expression()
+	print(") ")
+	Block()
+}
+
+func Statement() {
+	if token == tVar {
+		Declaration()
+	} else if token == tReturn {
+		ReturnStmt()
+	} else if token == tLBrace {
+		Block()
+	} else if token == tIf {
+		IfStmt()
+	} else if token == tFor {
+		ForStmt()
+	} else {
+		SimpleStmt()
+	}
 }
 
 func StatementList() {
@@ -422,8 +527,10 @@ func StatementList() {
 
 func Block() {
 	expect(tLBrace, "{")
+	print("{\n")
 	StatementList()
 	expect(tRBrace, "}")
+	print("}\n")
 }
 
 func FunctionBody() {
@@ -435,9 +542,12 @@ func FunctionDecl() {
 	print("void " + strToken + "(")
 	identifier("function name")
 	Signature()
-	print(") {\n")
+	print(") ")
 	FunctionBody()
-	print("}\n")
+}
+
+func Declaration() {
+	VarDecl() // we don't support ConstDecl or TypeDecl
 }
 
 func TopLevelDecl() {
