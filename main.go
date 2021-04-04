@@ -16,38 +16,39 @@ package main
 
 var (
 	c    int
-	line int = 1
-	col  int = 0
+	line int
+	col  int
 
-	token      int
-	intToken   int
-	strToken   string
-	inFunc     bool
-	calledName string
+	token       int
+	intToken    int
+	strToken    string
+	currentFunc string
+
+	consts []string
 
 	globals     []string
 	globalTypes []int
+
+	locals     []string
+	localTypes []int
 
 	funcs          []string
 	funcSigIndexes []int // indexes into funcSigs
 	funcSigs       []int // for each func: retType N arg1Type ... argNType
 
-	locals     []string
-	localTypes []int
-
 	strs     []string
 	strAddrs []int
 )
 
-var (
-	typeVoid        int = 0
-	typeInt         int = 1
-	typeString      int = 2
-	typeSliceInt    int = 3
-	typeSliceString int = 4
+const (
+	typeVoid        int = 1
+	typeInt         int = 2
+	typeString      int = 3
+	typeSliceInt    int = 4
+	typeSliceString int = 5
 )
 
-var (
+const (
 	tEOF int = -1
 
 	// Keywords
@@ -55,23 +56,24 @@ var (
 	tElse    int = 2
 	tFor     int = 3
 	tVar     int = 4
-	tFunc    int = 5
-	tReturn  int = 6
-	tPackage int = 7
+	tConst   int = 5
+	tFunc    int = 6
+	tReturn  int = 7
+	tPackage int = 8
 
 	// Literals and identifiers
-	tIntLit int = 8
-	tStrLit int = 9
-	tIdent  int = 10
+	tIntLit int = 9
+	tStrLit int = 10
+	tIdent  int = 11
 
 	// Two-character tokens
-	tOr         int = 11
-	tAnd        int = 12
-	tEq         int = 13
-	tNotEq      int = 14
-	tLessEq     int = 15
-	tGreaterEq  int = 16
-	tDeclAssign int = 17
+	tOr         int = 12
+	tAnd        int = 13
+	tEq         int = 14
+	tNotEq      int = 15
+	tLessEq     int = 16
+	tGreaterEq  int = 17
+	tDeclAssign int = 18
 
 	// Single-character tokens (these use the ASCII value)
 	tPlus      int = '+'
@@ -271,6 +273,8 @@ func nextTokenInner() {
 			token = tFor
 		} else if strToken == "var" {
 			token = tVar
+		} else if strToken == "const" {
+			token = tConst
 		} else if strToken == "func" {
 			token = tFunc
 		} else if strToken == "return" {
@@ -365,6 +369,8 @@ func tokenStr(t int) string {
 		return "\"for\""
 	} else if t == tVar {
 		return "\"var\""
+	} else if t == tConst {
+		return "\"const\""
 	} else if t == tFunc {
 		return "\"func\""
 	} else if t == tReturn {
@@ -413,7 +419,9 @@ func typeStr(typ int) string {
 }
 
 func typeSize(typ int) int {
-	if typ == typeInt {
+	if typ == typeVoid {
+		return 0
+	} else if typ == typeInt {
 		return 8
 	} else if typ == typeString {
 		return 16
@@ -423,8 +431,8 @@ func typeSize(typ int) int {
 		return 24
 	} else {
 		error("unknown type " + intStr(typ))
+		return 0
 	}
-	return 0
 }
 
 func expect(expected int, msg string) {
@@ -456,28 +464,329 @@ func quoteStr(s string, delim string) string {
 	return quoted + delim
 }
 
-func Literal() {
-	if token == tIntLit {
-		print("push qword " + intStr(intToken) + "\n")
+// Code generator functions
 
-		nextToken()
-	} else if token == tStrLit {
-		if len(strs) == 0 {
-			strs = append(strs, strToken)
-			strAddrs = append(strAddrs, 0)
+func genProgramStart() {
+	print("global _start\n")
+	print("section .text\n")
+	print("\n")
+
+	print("_start:\n")
+	print("mov rax, _space\n")
+	print("mov [_spacePtr], rax\n")
+	print("call main\n")
+	print("mov rax, 60\n") // system call for "exit"
+	print("mov rdi, 0\n")  // exit code 0
+	print("syscall\n")
+	print("\n")
+
+	print("print:\n")
+	print("push rbp\n") // rbp ret addr len
+	print("mov rbp, rsp\n")
+	print("mov rax, 1\n")        // system call for "write"
+	print("mov rdi, 1\n")        // file handle 1 is stdout
+	print("mov rsi, [rbp+16]\n") // address
+	print("mov rdx, [rbp+24]\n") // length
+	print("syscall\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
+
+	print("_strAdd:\n")
+	print("push rbp\n") // rbp ret addr1 len1 addr0 len0
+	print("mov rbp, rsp\n")
+	// Allocate len0+len1 bytes
+	print("mov rax, [rbp+24]\n") // len1
+	print("add rax, [rbp+40]\n") // len1 + len0
+	print("push rax\n")
+	print("call _alloc\n")
+	print("add rsp, 8\n")
+	// Move len0 bytes from addr0 to addrNew
+	print("mov rsi, [rbp+32]\n")
+	print("mov rdi, rax\n")
+	print("mov rcx, [rbp+40]\n")
+	print("rep movsb\n")
+	// Move len1 bytes from addr1 to addrNew+len0
+	print("mov rsi, [rbp+16]\n")
+	print("mov rdi, rax\n")
+	print("add rdi, [rbp+40]\n")
+	print("mov rcx, [rbp+24]\n")
+	print("rep movsb\n")
+	// Return addrNew len0+len1 (addrNew already in rax)
+	print("mov rbx, [rbp+24]\n")
+	print("add rbx, [rbp+40]\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
+
+	// TODO: check for out of memory
+	print("_alloc:\n")
+	print("push rbp\n") // rbp ret size
+	print("mov rbp, rsp\n")
+	print("mov rax, [_spacePtr]\n")
+	print("mov rbx, [rbp+16]\n")
+	print("add qword [_spacePtr], rbx\n")
+	print("pop rbp\n")
+	print("ret\n")
+}
+
+func genConst(name string, value int) {
+	print(name + " equ " + intStr(value) + "\n")
+}
+
+func genIntLit(n int) {
+	print("push qword " + intStr(n) + "\n")
+}
+
+func genStrLit(s string) {
+	// Add string to strs and strAddrs tables
+	if len(strs) == 0 {
+		strs = append(strs, s)
+		strAddrs = append(strAddrs, 0)
+	} else {
+		lastLen := len(strs[len(strs)-1])
+		lastAddr := strAddrs[len(strAddrs)-1]
+		strs = append(strs, s)
+		strAddrs = append(strAddrs, lastAddr+lastLen)
+	}
+	// Push string struct: length and then address (by label)
+	print("push qword " + intStr(len(s)) + "\n")
+	print("push qword str" + intStr(len(strs)-1) + "\n")
+}
+
+func genLocalFetch(index int) int {
+	print("push qword [rbp+TODO]\n")
+	return localTypes[index]
+}
+
+func genGlobalFetch(index int) int {
+	name := globals[index]
+	print("push qword [" + name + "]\n") // TODO: handle strings and slices
+	return globalTypes[index]
+}
+
+func genConstFetch(index int) int {
+	name := consts[index]
+	print("push qword " + name + "\n")
+	return typeInt
+}
+
+func genIdentifier(name string) int {
+	localIndex := findLocal(name)
+	if localIndex >= 0 {
+		return genLocalFetch(localIndex)
+	}
+	globalIndex := findGlobal(name)
+	if globalIndex >= 0 {
+		return genGlobalFetch(globalIndex)
+	}
+	constIndex := findConst(name)
+	if constIndex >= 0 {
+		return genConstFetch(constIndex)
+	}
+	funcIndex := findFunc(name)
+	if funcIndex >= 0 {
+		sigIndex := funcSigIndexes[funcIndex]
+		return funcSigs[sigIndex] // result type
+	}
+	error("identifier " + quoteStr(name, "\"") + " not defined")
+	return 0
+}
+
+func genLocalAssign(index int) {
+	print("pop qword [rbp+TODO]\n")
+}
+
+func genGlobalAssign(index int) {
+	name := globals[index]
+	print("pop qword [" + name + "]\n") // TODO: handle strings and slices
+}
+
+func genAssign(name string) {
+	localIndex := findLocal(name)
+	if localIndex >= 0 {
+		genLocalAssign(localIndex)
+		return
+	}
+	globalIndex := findGlobal(name)
+	if globalIndex >= 0 {
+		genGlobalAssign(globalIndex)
+		return
+	}
+	error("identifier " + quoteStr(name, "\"") + " not defined (or not assignable)")
+}
+
+func genCall(name string) {
+	print("call " + name + "\n")
+	size := argsSize(name)
+	if size > 0 {
+		print("add rsp, " + intStr(size) + "\n")
+	}
+	index := findFunc(name)
+	sigIndex := funcSigIndexes[index]
+	resultType := funcSigs[sigIndex]
+	if resultType == typeInt {
+		print("push rax\n")
+	} else if resultType == typeString {
+		print("push rbx\n")
+		print("push rax\n")
+	}
+}
+
+func genFuncStart(name string) {
+	print("\n")
+	print(name + ":\n")
+	print("push rbp\n")
+	print("mov rbp, rsp\n")
+}
+
+func genFuncEnd() {
+	print("pop rbp\n")
+	print("ret\n")
+}
+
+func genDataSections() {
+	print("\n")
+	print("section .data\n")
+	i := 0
+	for i < len(strs) {
+		print("str" + intStr(i) + ": db " + quoteStr(strs[i], "`") + "\n")
+		i = i + 1
+	}
+	print("align 8\n")
+	i = 0
+	for i < len(globals) {
+		typ := globalTypes[i]
+		if typ == typeInt {
+			print(globals[i] + ": dq 0\n")
+		} else if typ == typeString {
+			print(globals[i] + ": dq 0, 0\n") // string: address, length
 		} else {
-			lastLen := len(strs[len(strs)-1])
-			lastAddr := strAddrs[len(strAddrs)-1]
-			strs = append(strs, strToken)
-			strAddrs = append(strAddrs, lastAddr+lastLen)
+			print(globals[i] + ": dq 0, 0, 0\n") // slice: address, length, capacity
 		}
+		i = i + 1
+	}
 
-		print("push qword " + intStr(len(strToken)) + "\n")
-		print("push qword str" + intStr(len(strs)-1) + "\n")
+	print("\n")
+	print("section .bss\n")
+	print("_spacePtr: resq 1\n")
+	print("_space: resb 1048576\n")
+}
 
+func genUnary(op int, typ int) {
+	if typ != typeInt {
+		error("unary operator not allowed on type " + typeStr(typ))
+	}
+	print("pop rax\n")
+	if op == tMinus {
+		print("neg rax\n")
+	} else if op == tNot {
+		print("cmp rax, 0\n")
+		print("setz rax\n")
+	}
+	print("push rax\n")
+}
+
+func genBinary(op int, typ1 int, typ2 int) {
+	if typ1 != typ2 {
+		error("binary operands must be the same type")
+	}
+	if typ1 == typeString {
+		genBinaryString(op)
+	} else {
+		genBinaryInt(op)
+	}
+}
+
+func genBinaryString(op int) {
+	if op == tPlus {
+		print("call _strAdd\n")
+		print("add rsp, 32\n")
+		print("push rbx\n")
+		print("push rax\n")
+	} else if op == tEq {
+		print("call _strEq\n")
+		print("add rsp, 32\n")
+		print("push rax\n")
+	} else if op == tNotEq {
+		print("call _strEq\n")
+		print("add rsp, 32\n")
+		print("cmp rax, 0\n")
+		print("setz rax\n")
+		print("push rax\n")
+	} else {
+		error("operator " + tokenStr(op) + " not allowed on strings")
+	}
+}
+
+func genBinaryInt(op int) {
+	print("pop rbx\n")
+	print("pop rax\n")
+	if op == tPlus {
+		print("add rax, rbx\n")
+	} else if op == tMinus {
+		print("sub rax, rbx\n")
+	} else if op == tTimes {
+		print("imul rbx\n")
+	} else if op == tDivide {
+		print("cdq\n")
+		print("idiv rbx\n")
+	} else if op == tModulo {
+		print("cdq\n")
+		print("idiv rbx\n")
+		print("mov rax, rdx\n")
+	} else if op == tEq {
+		print("cmp rax, rbx\n")
+		print("sete rax\n")
+	} else if op == tNotEq {
+		print("cmp rax, rbx\n")
+		print("setne rax\n")
+	} else if op == tLess {
+		print("cmp rax, rbx\n")
+		print("setl rax\n")
+	} else if op == tLessEq {
+		print("cmp rax, rbx\n")
+		print("setle rax\n")
+	} else if op == tGreater {
+		print("cmp rax, rbx\n")
+		print("setg rax\n")
+	} else if op == tGreaterEq {
+		print("cmp rax, rbx\n")
+		print("setge rax\n")
+	} else if op == tAnd {
+		print("and rax, rbx\n")
+	} else if op == tOr {
+		print("or rax, rbx\n")
+	}
+	print("push rax\n")
+}
+
+func genReturn(typ int) {
+	if typ == typeInt {
+		print("pop rax\n")
+	} else if typ == typeString {
+		print("pop rax\n")
+		print("pop rbx\n")
+	} else if typ != typeVoid {
+		error("can only return int or string")
+	}
+	genFuncEnd()
+}
+
+// Parser functions
+
+func Literal() int {
+	if token == tIntLit {
+		genIntLit(intToken)
 		nextToken()
+		return typeInt
+	} else if token == tStrLit {
+		genStrLit(strToken)
+		nextToken()
+		return typeString
 	} else {
 		error("expected integer or string literal")
+		return 0
 	}
 }
 
@@ -503,6 +812,17 @@ func findGlobal(name string) int {
 	return -1
 }
 
+func findConst(name string) int {
+	i := 0
+	for i < len(consts) {
+		if consts[i] == name {
+			return i
+		}
+		i = i + 1
+	}
+	return -1
+}
+
 func findFunc(name string) int {
 	i := 0
 	for i < len(funcs) {
@@ -514,37 +834,21 @@ func findFunc(name string) int {
 	return -1
 }
 
-func genIdentifier(name string) {
-	localIndex := findLocal(name)
-	if localIndex >= 0 {
-		print("push qword [rbp+TODO]\n")
-		return
-	}
-	globalIndex := findGlobal(name)
-	if globalIndex >= 0 {
-		print("push qword [" + name + "]\n") // TODO: handle strings and slices
-		return
-	}
-	funcIndex := findFunc(name)
-	if funcIndex >= 0 {
-		calledName = name // save called function name for later
-		return
-	}
-	error("identifier " + quoteStr(name, "\"") + " not defined")
-}
-
-func Operand() {
+func Operand() int {
 	if token == tIntLit || token == tStrLit {
-		Literal()
+		return Literal()
 	} else if token == tIdent {
-		genIdentifier(strToken)
+		name := strToken
 		identifier("identifier")
+		return genIdentifier(name)
 	} else if token == tLParen {
 		nextToken()
-		Expression()
+		typ := Expression()
 		expect(tRParen, ")")
+		return typ
 	} else {
 		error("expected literal, identifier, or (expression)")
+		return 0
 	}
 }
 
@@ -574,6 +878,7 @@ func argsSize(funcName string) int {
 }
 
 func Arguments() {
+	calledName := strToken
 	expect(tLParen, "(")
 	if token != tRParen {
 		ExpressionList()
@@ -582,8 +887,7 @@ func Arguments() {
 		}
 	}
 	expect(tRParen, ")")
-	print("call " + calledName + "\n")
-	print("add rsp, " + intStr(argsSize(calledName)) + "\n")
+	genCall(calledName)
 }
 
 func Index() {
@@ -592,67 +896,93 @@ func Index() {
 	expect(tRBracket, "]")
 }
 
-func PrimaryExpr() {
-	Operand()
+func PrimaryExpr() int {
+	typ := Operand()
 	if token == tLParen {
 		Arguments()
+		return typ
 	} else if token == tLBracket {
 		Index()
+		if typ == typeSliceInt {
+			return typeInt
+		} else if typ == typeSliceString {
+			return typeString
+		} else {
+			error("invalid slice type " + typeStr(typ))
+		}
 	}
+	return typ
 }
 
-func UnaryExpr() {
+func UnaryExpr() int {
 	if token == tPlus || token == tMinus || token == tNot {
+		op := token
 		nextToken()
-		UnaryExpr()
-		return
+		typ := UnaryExpr()
+		genUnary(op, typ)
+		return typ
 	}
-	PrimaryExpr()
+	return PrimaryExpr()
 }
 
-func mulExpr() {
-	UnaryExpr()
+func mulExpr() int {
+	typ1 := UnaryExpr()
 	for token == tTimes || token == tDivide || token == tModulo {
+		op := token
 		nextToken()
-		UnaryExpr()
+		typ2 := UnaryExpr()
+		genBinary(op, typ1, typ2)
 	}
+	return typ1
 }
 
-func addExpr() {
-	mulExpr()
+func addExpr() int {
+	typ1 := mulExpr()
 	for token == tPlus || token == tMinus {
+		op := token
 		nextToken()
-		mulExpr()
+		typ2 := mulExpr()
+		genBinary(op, typ1, typ2)
 	}
+	return typ1
 }
 
-func comparisonExpr() {
-	addExpr()
+func comparisonExpr() int {
+	typ1 := addExpr()
 	for token == tEq || token == tNotEq || token == tLess || token == tLessEq ||
 		token == tGreater || token == tGreaterEq {
+		op := token
 		nextToken()
-		addExpr()
+		typ2 := addExpr()
+		genBinary(op, typ1, typ2)
 	}
+	return typ1
 }
 
-func andExpr() {
-	comparisonExpr()
+func andExpr() int {
+	typ1 := comparisonExpr()
 	for token == tAnd {
+		op := token
 		nextToken()
-		comparisonExpr()
+		typ2 := comparisonExpr()
+		genBinary(op, typ1, typ2)
 	}
+	return typ1
 }
 
-func orExpr() {
-	andExpr()
+func orExpr() int {
+	typ1 := andExpr()
 	for token == tOr {
+		op := token
 		nextToken()
-		andExpr()
+		typ2 := andExpr()
+		genBinary(op, typ1, typ2)
 	}
+	return typ1
 }
 
-func Expression() {
-	orExpr()
+func Expression() int {
+	return orExpr()
 }
 
 func identifier(msg string) {
@@ -720,12 +1050,43 @@ func VarDecl() {
 	}
 }
 
+func ConstSpec() {
+	// We only support typed integer constants
+	name := strToken
+	consts = append(consts, name)
+	identifier("variable identifier")
+	typ := Type()
+	if typ != typeInt {
+		error("constants must be typed int")
+	}
+	expect(tAssign, "=")
+	value := intToken
+	expect(tIntLit, "integer literal")
+	genConst(name, value)
+}
+
+func ConstDecl() {
+	expect(tConst, "\"const\"")
+	if token == tLParen {
+		nextToken()
+		for token != tEOF && token != tRParen {
+			ConstSpec()
+			expect(tSemicolon, ";")
+		}
+		expect(tRParen, ")")
+	} else {
+		ConstSpec()
+	}
+}
+
 func ParameterDecl() {
+	locals = append(locals, strToken)
 	identifier("parameter name")
 	typ := Type()
+	localTypes = append(localTypes, typ)
 	funcSigs = append(funcSigs, typ)
 	resultIndex := funcSigIndexes[len(funcSigIndexes)-1]
-	funcSigs[resultIndex+1] = typ // increment numArgs
+	funcSigs[resultIndex+1] = funcSigs[resultIndex+1] + 1 // increment numArgs
 }
 
 func ParameterList() {
@@ -750,6 +1111,8 @@ func Parameters() {
 func Signature() {
 	funcSigs = append(funcSigs, typeVoid) // space for result type
 	funcSigs = append(funcSigs, 0)        // space for numArgs
+	locals = locals[:]
+	localTypes = localTypes[:]
 	Parameters()
 	if token != tLBrace {
 		typ := Type()
@@ -759,9 +1122,25 @@ func Signature() {
 }
 
 func SimpleStmt() {
-	Expression()
-	if token == tAssign || token == tDeclAssign {
+	// Funky parsing here to handle assignments
+	if token == tIdent {
+		identName := strToken
 		nextToken()
+		if token == tAssign || token == tDeclAssign {
+			// TOOD: handle tDeclAssign properly
+			nextToken()
+			Expression()
+			genAssign(identName)
+		} else if token == tLParen {
+			genIdentifier(identName)
+			Arguments()
+		} else if token == tRBracket {
+			genIdentifier(identName)
+			Index()
+		} else {
+			genIdentifier(identName)
+		}
+	} else {
 		Expression()
 	}
 }
@@ -769,7 +1148,10 @@ func SimpleStmt() {
 func ReturnStmt() {
 	expect(tReturn, "\"return\"")
 	if token != tSemicolon {
-		Expression()
+		typ := Expression()
+		genReturn(typ)
+	} else {
+		genReturn(typeVoid)
 	}
 }
 
@@ -823,24 +1205,20 @@ func Block() {
 }
 
 func FunctionBody() {
-	inFunc = true
 	Block()
-	inFunc = false
 }
 
 func FunctionDecl() {
 	expect(tFunc, "\"func\"")
-	print("\n")
-	print(strToken + ":\n")
-	print("push rbp\n")
-	print("mov rbp, rsp\n")
+	currentFunc = strToken
+	genFuncStart(strToken)
 	funcs = append(funcs, strToken)
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
 	identifier("function name")
 	Signature()
 	FunctionBody()
-	print("pop rbp\n")
-	print("ret\n")
+	genFuncEnd()
+	currentFunc = ""
 }
 
 func Declaration() {
@@ -851,10 +1229,13 @@ func Declaration() {
 func TopLevelDecl() {
 	if token == tVar {
 		VarDecl()
+	} else if token == tConst {
+		// ConstDecl only supported at top level
+		ConstDecl()
 	} else if token == tFunc {
 		FunctionDecl()
 	} else {
-		error("expected \"var\" or \"func\"")
+		error("expected \"var\", \"const\", or \"func\"")
 	}
 }
 
@@ -862,20 +1243,12 @@ func SourceFile() {
 	PackageClause()
 	expect(tSemicolon, ";")
 
-	for token == tVar || token == tFunc {
+	for token == tVar || token == tFunc || token == tConst {
 		TopLevelDecl()
 		expect(tSemicolon, ";")
 	}
 
 	expect(tEOF, "end of file")
-}
-
-func dumpGlobals() {
-	i := 0
-	for i < len(globals) {
-		print("GLOBAL: " + globals[i] + " " + typeStr(globalTypes[i]) + "\n")
-		i = i + 1
-	}
 }
 
 func dumpFuncs() {
@@ -899,37 +1272,7 @@ func dumpFuncs() {
 	}
 }
 
-func dumpStrs() {
-	print("\n")
-	print("section .data\n")
-	i := 0
-	for i < len(strs) {
-		print("str" + intStr(i) + ": db " + quoteStr(strs[i], "`") + "\n")
-		i = i + 1
-	}
-}
-
 func main() {
-	print("global _start\n")
-	print("section .text\n")
-	print("\n")
-	print("_start:\n")
-	print("call main\n")
-	print("mov rax, 60\n") // system call for "exit"
-	print("mov rdi, 0\n")  // exit code 0
-	print("syscall\n")
-	print("\n")
-	print("print:\n")
-	print("push rbp\n")
-	print("mov rbp, rsp\n")
-	print("mov rax, 1\n")        // system call for "write"
-	print("mov rdi, 1\n")        // file handle 1 is stdout
-	print("mov rsi, [rbp+16]\n") // address
-	print("mov rdx, [rbp+24]\n") // length
-	print("syscall\n")
-	print("pop rbp\n")
-	print("ret\n")
-
 	// Define builtin: func print(s string)
 	funcs = append(funcs, "print")
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
@@ -937,12 +1280,13 @@ func main() {
 	funcSigs = append(funcSigs, 1)
 	funcSigs = append(funcSigs, typeString)
 
+	genProgramStart()
+
+	line = 1
+	col = 0
 	nextChar()
 	nextToken()
-
 	SourceFile()
 
-	dumpGlobals()
-	//	dumpFuncs()
-	dumpStrs()
+	genDataSections()
 }
