@@ -32,3 +32,8 @@ func exit(code int) {
 func intStr(n int) string {
 	return strconv.Itoa(n)
 }
+
+// TODO: implement in main.go later
+func charStr(ch int) string {
+	return string([]byte{byte(ch)})
+}

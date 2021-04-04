@@ -1,7 +1,7 @@
+// A test
 package p
 
-var x int = 42
-
-func doThing(n int, s string) int {
-	!n + (-4) + 3*4
+func f() {
+	c>='0'&&c<='9' || c==3
+	x := 8+4 + foo()
 }

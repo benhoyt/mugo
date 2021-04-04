@@ -84,10 +84,6 @@ func error(msg string) {
 	exit(1)
 }
 
-func charStr(ch int) string {
-	return string([]byte{byte(ch)})
-}
-
 func isDigit(ch int) bool {
 	return ch >= '0' && ch <= '9'
 }
@@ -104,7 +100,11 @@ func expectChar(ch int) {
 }
 
 func nextToken() {
-	// Skip whitespace
+	nextTokenInner()
+	//	print("TOKEN: " + tokenStr(token) + "\n")
+}
+
+func skipWhitespace() int {
 	for c == ' ' || c == '\t' || c == '\r' || c == '\n' {
 		if c == '\n' {
 			// Semicolon insertion: https://golang.org/ref/spec#Semicolons
@@ -112,16 +112,44 @@ func nextToken() {
 				token == tReturn || token == tRParen || token == tRBracket ||
 				token == tRBrace {
 				nextChar()
-				token = tSemicolon
-				return
+				return tSemicolon
 			}
 		}
 		nextChar()
 	}
+	return 0
+}
+
+func nextTokenInner() {
+	t := skipWhitespace()
+	if t != 0 {
+		token = t
+		return
+	}
+
 	if c < 0 {
 		// End of file
 		token = tEOF
 		return
+	}
+
+	// Skip comments (and detect the '/' operator)
+	for c == '/' {
+		nextChar()
+		if c != '/' {
+			token = tDivide
+			return
+		}
+		nextChar()
+		// Comment, skip till end of line
+		for c >= 0 && c != '\n' {
+			nextChar()
+		}
+		t := skipWhitespace()
+		if t != 0 {
+			token = t
+			return
+		}
 	}
 
 	// Integer literal
@@ -139,6 +167,9 @@ func nextToken() {
 	// Character literal
 	if c == '\'' {
 		nextChar()
+		if c == '\n' {
+			error("newline not allowed in character literal")
+		}
 		if c == '\\' {
 			// Escape character
 			nextChar()
@@ -153,7 +184,7 @@ func nextToken() {
 			} else if c == 'n' {
 				intToken = '\n'
 			} else {
-				error("unexpected character escape '\\" + charStr(c) + "'")
+				error("unexpected escape '\\" + charStr(c) + "'")
 			}
 			nextChar()
 		} else {
@@ -161,7 +192,6 @@ func nextToken() {
 			nextChar()
 		}
 		expectChar('\'')
-		nextChar()
 		token = tIntLit
 		return
 	}
@@ -171,6 +201,9 @@ func nextToken() {
 		nextChar()
 		strToken = ""
 		for c >= 0 && c != '"' {
+			if c == '\n' {
+				error("newline not allowed in string")
+			}
 			if c == '\\' {
 				// Escape character
 				nextChar()
@@ -185,7 +218,7 @@ func nextToken() {
 				} else if c == 'n' {
 					c = '\n'
 				} else {
-					error("unexpected string escape \"\\" + charStr(c) + "\"")
+					error("unexpected escape \"\\" + charStr(c) + "\"")
 				}
 			}
 			// TODO: not great to build string via concatenation
@@ -193,7 +226,6 @@ func nextToken() {
 			nextChar()
 		}
 		expectChar('"')
-		nextChar()
 		token = tStrLit
 		return
 	}
@@ -230,7 +262,7 @@ func nextToken() {
 	}
 
 	// Single-character tokens (token is ASCII value)
-	if c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == ';' || c == ',' ||
+	if c == '+' || c == '-' || c == '*' || c == '%' || c == ';' || c == ',' ||
 		c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']' {
 		token = c
 		nextChar()
@@ -281,14 +313,17 @@ func nextToken() {
 		nextChar()
 		expectChar('|')
 		token = tOr
+		return
 	} else if c == '&' {
 		nextChar()
 		expectChar('&')
 		token = tAnd
+		return
 	} else if c == ':' {
 		nextChar()
 		expectChar('=')
 		token = tDeclAssign
+		return
 	}
 
 	error("unexpected '" + charStr(c) + "'")
@@ -314,11 +349,11 @@ func tokenStr(t int) string {
 	} else if t == tPackage {
 		return "\"package\""
 	} else if t == tIntLit {
-		return "integer literal"
+		return "integer " + intStr(intToken)
 	} else if t == tStrLit {
-		return "string literal"
+		return "string " + quoteStr(strToken)
 	} else if t == tIdent {
-		return "identifier"
+		return "identifier \"" + strToken + "\""
 	} else if t == tOr {
 		return "||"
 	} else if t == tAnd {
@@ -346,7 +381,25 @@ func expect(expected int, msg string) {
 }
 
 func quoteStr(s string) string {
-	return "\"" + s + "\"" // TODO: proper escaping
+	i := 0
+	quoted := "\""
+	for i < len(s) {
+		if s[i] == '"' {
+			quoted = quoted + "\\\""
+		} else if s[i] == '\\' {
+			quoted = quoted + "\\\\"
+		} else if s[i] == '\t' {
+			quoted = quoted + "\\t"
+		} else if s[i] == '\r' {
+			quoted = quoted + "\\r"
+		} else if s[i] == '\n' {
+			quoted = quoted + "\\n"
+		} else {
+			quoted = quoted + charStr(int(s[i]))
+		}
+		i = i + 1
+	}
+	return quoted + "\""
 }
 
 func Literal() {
@@ -378,8 +431,44 @@ func Operand() {
 	}
 }
 
+func ExpressionList() {
+	// TODO: this doesn't parse trailing commas correctly -- probably same for ParameterList
+	Expression()
+	for token == tComma {
+		nextToken()
+		print(", ")
+		Expression()
+	}
+}
+
+func Arguments() {
+	expect(tLParen, "(")
+	print("(")
+	if token != tRParen {
+		ExpressionList()
+		if token == tComma {
+			nextToken()
+		}
+	}
+	expect(tRParen, ")")
+	print(")")
+}
+
+func Index() {
+	expect(tLBracket, "[")
+	print("[")
+	Expression()
+	expect(tRBracket, "]")
+	print("]")
+}
+
 func PrimaryExpr() {
-	Operand() // TODO: add index and slice expressions?
+	Operand()
+	if token == tLParen {
+		Arguments()
+	} else if token == tLBracket {
+		Index()
+	}
 }
 
 func UnaryExpr() {
@@ -463,15 +552,28 @@ func VarSpec() {
 	identifier("variable identifier")
 	typeName := strToken
 	Type()
-	expect(tAssign, "=")
-	print(typeName + " " + varName + " = ")
-	Expression()
+	if token == tAssign {
+		nextToken()
+		print(typeName + " " + varName + " = ")
+		Expression()
+	} else {
+		print(typeName + " " + varName) // TODO: assign type's zero value
+	}
 	print(";\n")
 }
 
 func VarDecl() {
 	expect(tVar, "\"var\"")
-	VarSpec()
+	if token == tLParen {
+		nextToken()
+		for token != tEOF && token != tRParen {
+			VarSpec()
+			expect(tSemicolon, ";")
+		}
+		expect(tRParen, ")")
+	} else {
+		VarSpec()
+	}
 }
 
 func ParameterDecl() {
@@ -485,8 +587,8 @@ func ParameterDecl() {
 func ParameterList() {
 	ParameterDecl()
 	for token == tComma {
-		print(", ")
 		nextToken()
+		print(", ")
 		ParameterDecl()
 	}
 }
@@ -509,9 +611,13 @@ func Signature() {
 	}
 }
 
-// SimpleStmt = EmptyStmt | ExpressionStmt | SendStmt | IncDecStmt | Assignment | ShortVarDecl .
 func SimpleStmt() {
-	Expression() // TODO
+	Expression()
+	if token == tAssign || token == tDeclAssign {
+		nextToken()
+		print(" = ")
+		Expression()
+	}
 	print(";\n")
 }
 
@@ -567,7 +673,7 @@ func Statement() {
 }
 
 func StatementList() {
-	for token != tEOF && token != tRBrace { // TODO: is tRBrace the only end condition?
+	for token != tEOF && token != tRBrace {
 		Statement()
 		expect(tSemicolon, ";")
 	}
@@ -595,7 +701,8 @@ func FunctionDecl() {
 }
 
 func Declaration() {
-	VarDecl() // we don't support ConstDecl or TypeDecl
+	// We don't support ConstDecl or TypeDecl
+	VarDecl()
 }
 
 func TopLevelDecl() {
