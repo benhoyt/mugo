@@ -554,15 +554,56 @@ func genStrLit(s string) {
 	print("push qword str" + intStr(len(strs)-1) + "\n")
 }
 
+func localOffset(index int) int {
+	funcIndex := findFunc(currentFunc)
+	sigIndex := funcSigIndexes[funcIndex]
+	numArgs := funcSigs[sigIndex+1]
+	if index < numArgs {
+		// Function argument local (add to rbp; args are on stack in reverse)
+		offset := 16
+		i := numArgs - 1
+		for i > index {
+			offset = offset + typeSize(localTypes[i])
+			i = i - 1
+		}
+		return offset
+	} else {
+		// Declared local (subtract from rbp)
+		offset := 0
+		i := numArgs
+		for i <= index {
+			offset = offset - typeSize(localTypes[i])
+			i = i + 1
+		}
+		return offset
+	}
+}
+
+func genFetch(typ int, addr string) {
+	if typ == typeInt {
+		print("push qword [" + addr + "]\n")
+	} else if typ == typeString {
+		print("push qword [" + addr + "+8]\n")
+		print("push qword [" + addr + "]\n")
+	} else { // slice
+		print("push qword [" + addr + "+16]\n")
+		print("push qword [" + addr + "+8]\n")
+		print("push qword [" + addr + "]\n")
+	}
+}
+
 func genLocalFetch(index int) int {
-	print("push qword [rbp+TODO]\n")
-	return localTypes[index]
+	offset := localOffset(index)
+	typ := localTypes[index]
+	genFetch(typ, "rbp+"+intStr(offset))
+	return typ
 }
 
 func genGlobalFetch(index int) int {
 	name := globals[index]
-	print("push qword [" + name + "]\n") // TODO: handle strings and slices
-	return globalTypes[index]
+	typ := globalTypes[index]
+	genFetch(typ, name)
+	return typ
 }
 
 func genConstFetch(index int) int {
@@ -593,13 +634,27 @@ func genIdentifier(name string) int {
 	return 0
 }
 
+func genAssignInstrs(typ int, addr string) {
+	if typ == typeInt {
+		print("pop qword [" + addr + "]\n")
+	} else if typ == typeString {
+		print("pop qword [" + addr + "]\n")
+		print("pop qword [" + addr + "+8]\n")
+	} else { // slice
+		print("pop qword [" + addr + "]\n")
+		print("pop qword [" + addr + "+8]\n")
+		print("pop qword [" + addr + "+16]\n")
+	}
+}
+
 func genLocalAssign(index int) {
-	print("pop qword [rbp+TODO]\n")
+	offset := localOffset(index)
+	genAssignInstrs(localTypes[index], "rbp+"+intStr(offset))
 }
 
 func genGlobalAssign(index int) {
 	name := globals[index]
-	print("pop qword [" + name + "]\n") // TODO: handle strings and slices
+	genAssignInstrs(globalTypes[index], name)
 }
 
 func genAssign(name string) {
@@ -638,9 +693,11 @@ func genFuncStart(name string) {
 	print(name + ":\n")
 	print("push rbp\n")
 	print("mov rbp, rsp\n")
+	print("sub rsp, 160\n") // TODO: enough space for 10 strings -- huge hack!
 }
 
 func genFuncEnd() {
+	print("add rsp, 160\n")
 	print("pop rbp\n")
 	print("ret\n")
 }
@@ -1024,15 +1081,21 @@ func Type() int {
 func VarSpec() {
 	// We only support a single identifier, not a list
 	varName := strToken
-	globals = append(globals, varName)
 	identifier("variable identifier")
 	typ := Type()
-	globalTypes = append(globalTypes, typ)
-	if token == tAssign {
-		nextToken()
-		Expression()
+	if currentFunc == "" {
+		globals = append(globals, varName)
+		globalTypes = append(globalTypes, typ)
+		if token == tAssign {
+			error("assignment not supported for top-level var")
+		}
 	} else {
-		// TODO: assign type's zero value
+		defineLocal(typ, varName)
+		if token == tAssign {
+			nextToken()
+			Expression()
+			genAssign(varName)
+		}
 	}
 }
 
@@ -1080,10 +1143,10 @@ func ConstDecl() {
 }
 
 func ParameterDecl() {
-	locals = append(locals, strToken)
+	paramName := strToken
 	identifier("parameter name")
 	typ := Type()
-	localTypes = append(localTypes, typ)
+	defineLocal(typ, paramName)
 	funcSigs = append(funcSigs, typ)
 	resultIndex := funcSigIndexes[len(funcSigIndexes)-1]
 	funcSigs[resultIndex+1] = funcSigs[resultIndex+1] + 1 // increment numArgs
@@ -1111,8 +1174,6 @@ func Parameters() {
 func Signature() {
 	funcSigs = append(funcSigs, typeVoid) // space for result type
 	funcSigs = append(funcSigs, 0)        // space for numArgs
-	locals = locals[:]
-	localTypes = localTypes[:]
 	Parameters()
 	if token != tLBrace {
 		typ := Type()
@@ -1121,15 +1182,20 @@ func Signature() {
 	}
 }
 
+func defineLocal(typ int, name string) {
+	locals = append(locals, name)
+	localTypes = append(localTypes, typ)
+}
+
 func SimpleStmt() {
 	// Funky parsing here to handle assignments
 	if token == tIdent {
 		identName := strToken
 		nextToken()
-		if token == tAssign || token == tDeclAssign {
-			// TOOD: handle tDeclAssign properly
+		if token == tDeclAssign {
 			nextToken()
-			Expression()
+			typ := Expression()
+			defineLocal(typ, identName)
 			genAssign(identName)
 		} else if token == tLParen {
 			genIdentifier(identName)
@@ -1218,6 +1284,8 @@ func FunctionDecl() {
 	Signature()
 	FunctionBody()
 	genFuncEnd()
+	locals = locals[:0]
+	localTypes = localTypes[:0]
 	currentFunc = ""
 }
 
@@ -1268,6 +1336,21 @@ func dumpFuncs() {
 			j = j + 1
 		}
 		print(") " + typeStr(resultType) + "\n")
+		i = i + 1
+	}
+}
+
+func dumpLocals() {
+	i := 0
+	for i < len(locals) {
+		typ := localTypes[i]
+		if typ == typeInt {
+			print(locals[i] + ": dq 0; " + intStr(localOffset(i)) + "\n")
+		} else if typ == typeString {
+			print(locals[i] + ": dq 0, 0\n") // string: address, length
+		} else {
+			print(locals[i] + ": dq 0, 0, 0\n") // slice: address, length, capacity
+		}
 		i = i + 1
 	}
 }

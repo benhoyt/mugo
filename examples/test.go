@@ -43,11 +43,13 @@ package main
 // 	return intStr(n/10) + intStr(n%10)
 // }
 
-func f() string {
-	return "foo" + "bar\n"
+// -16   -8   0   8   16    24   32    40
+// taddr tlen rbp ret yaddr ylen xaddr xlen
+func add(x string, y string) string {
+	t := x
+	return t + y
 }
 
 func main() {
-	// print(intStr(1*2 + 3*4))
-	print(f())
+	print(add("foo", "bar\n"))
 }
