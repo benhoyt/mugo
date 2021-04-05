@@ -50,8 +50,6 @@ const (
 )
 
 const (
-	tEOF int = -1
-
 	// Keywords
 	tIf      int = 1
 	tElse    int = 2
@@ -94,6 +92,8 @@ const (
 	tRBrace    int = '}'
 	tLBracket  int = '['
 	tRBracket  int = ']'
+
+	tEOF int = 256
 )
 
 func nextChar() {
@@ -106,38 +106,11 @@ func nextChar() {
 }
 
 func intStr(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	if n == 1 {
-		return "1"
-	}
-	if n == 2 {
-		return "2"
-	}
-	if n == 3 {
-		return "3"
-	}
-	if n == 4 {
-		return "4"
-	}
-	if n == 5 {
-		return "5"
-	}
-	if n == 6 {
-		return "6"
-	}
-	if n == 7 {
-		return "7"
-	}
-	if n == 8 {
-		return "8"
-	}
-	if n == 9 {
-		return "9"
-	}
 	if n < 0 {
 		return "-" + intStr(-n)
+	}
+	if n < 10 {
+		return charStr(n + '0')
 	}
 	return intStr(n/10) + intStr(n%10)
 }
@@ -162,11 +135,6 @@ func expectChar(ch int) {
 	nextChar()
 }
 
-func nextToken() {
-	nextTokenInner()
-	//	print("TOKEN: " + tokenStr(token) + "\n")
-}
-
 func skipWhitespace() int {
 	for c == ' ' || c == '\t' || c == '\r' || c == '\n' {
 		if c == '\n' {
@@ -183,7 +151,7 @@ func skipWhitespace() int {
 	return 0
 }
 
-func nextTokenInner() {
+func nextToken() {
 	t := skipWhitespace()
 	if t != 0 {
 		token = t
@@ -394,6 +362,28 @@ func nextTokenInner() {
 	error("unexpected '" + charStr(c) + "'")
 }
 
+func quoteStr(s string, delim string) string {
+	i := 0
+	quoted := delim
+	for i < len(s) {
+		if s[i] == '"' {
+			quoted = quoted + "\\\""
+		} else if s[i] == '\\' {
+			quoted = quoted + "\\\\"
+		} else if s[i] == '\t' {
+			quoted = quoted + "\\t"
+		} else if s[i] == '\r' {
+			quoted = quoted + "\\r"
+		} else if s[i] == '\n' {
+			quoted = quoted + "\\n"
+		} else {
+			quoted = quoted + charStr(int(s[i]))
+		}
+		i = i + 1
+	}
+	return quoted + delim
+}
+
 func tokenStr(t int) string {
 	if t < 0 {
 		return "EOF"
@@ -478,28 +468,6 @@ func expect(expected int, msg string) {
 		error("expected " + msg + " not " + tokenStr(token))
 	}
 	nextToken()
-}
-
-func quoteStr(s string, delim string) string {
-	i := 0
-	quoted := delim
-	for i < len(s) {
-		if s[i] == '"' {
-			quoted = quoted + "\\\""
-		} else if s[i] == '\\' {
-			quoted = quoted + "\\\\"
-		} else if s[i] == '\t' {
-			quoted = quoted + "\\t"
-		} else if s[i] == '\r' {
-			quoted = quoted + "\\r"
-		} else if s[i] == '\n' {
-			quoted = quoted + "\\n"
-		} else {
-			quoted = quoted + charStr(int(s[i]))
-		}
-		i = i + 1
-	}
-	return quoted + delim
 }
 
 // Code generator functions
@@ -996,7 +964,7 @@ func argsSize(funcName string) int {
 }
 
 func Arguments() {
-	calledName := strToken
+	calledName := strToken // function name will still be in strToken
 	expect(tLParen, "(")
 	if token != tRParen {
 		ExpressionList()
@@ -1021,7 +989,9 @@ func PrimaryExpr() int {
 		return typ
 	} else if token == tLBracket {
 		Index()
-		if typ == typeSliceInt {
+		if typ == typeString {
+			return typeInt
+		} else if typ == typeSliceInt {
 			return typeInt
 		} else if typ == typeSliceString {
 			return typeString
@@ -1119,7 +1089,7 @@ func Type() int {
 		expect(tRBracket, "]")
 		typeName := strToken
 		identifier("\"int\" or \"string\"")
-		if typeName == "int" {
+		if typeName == "int" || typeName == "bool" {
 			return typeSliceInt
 		} else if typeName == "string" {
 			return typeSliceString
@@ -1129,7 +1099,7 @@ func Type() int {
 	}
 	typeName := strToken
 	identifier("\"int\" or \"string\"")
-	if typeName == "int" {
+	if typeName == "int" || typeName == "bool" {
 		return typeInt
 	} else if typeName == "string" {
 		return typeString
@@ -1316,12 +1286,12 @@ func IfStmt() {
 func ForStmt() {
 	expect(tFor, "\"for\"")
 	loopLabel := newLabel()
-	genLabel(loopLabel)
+	genLabel(loopLabel) // top of loop
 	Expression()
 	doneLabel := newLabel()
-	genJumpIfZero(doneLabel)
+	genJumpIfZero(doneLabel) // jump to after loop if done
 	Block()
-	genJump(loopLabel)
+	genJump(loopLabel) // go back to top of loop
 	genLabel(doneLabel)
 }
 
@@ -1403,6 +1373,7 @@ func SourceFile() {
 	expect(tEOF, "end of file")
 }
 
+// TODO: remove
 func dumpFuncs() {
 	i := 0
 	for i < len(funcs) {
@@ -1424,6 +1395,7 @@ func dumpFuncs() {
 	}
 }
 
+// TODO: remove
 func dumpLocals() {
 	i := 0
 	for i < len(locals) {
@@ -1440,12 +1412,48 @@ func dumpLocals() {
 }
 
 func main() {
-	// Define builtin: func print(s string)
+	// Builtin: func print(s string)
 	funcs = append(funcs, "print")
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
 	funcSigs = append(funcSigs, typeVoid)
 	funcSigs = append(funcSigs, 1)
 	funcSigs = append(funcSigs, typeString)
+
+	// TODO: define these in genProgramStart
+
+	// Builtin: func printError(s string)
+	funcs = append(funcs, "printError")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeVoid)
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeString)
+
+	// Builtin: func readByte() int
+	funcs = append(funcs, "readByte")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeInt)
+	funcSigs = append(funcSigs, 0)
+
+	// Builtin: func exit(code int)
+	funcs = append(funcs, "exit")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeVoid)
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeInt)
+
+	// Builtin: func charStr(ch int) string
+	funcs = append(funcs, "charStr")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeString)
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeInt)
+
+	// Builtin: func len(s stringOrSlice) int
+	funcs = append(funcs, "len")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeInt)
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeString) // TODO: handle string or slice
 
 	genProgramStart()
 
