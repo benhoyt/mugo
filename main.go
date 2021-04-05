@@ -23,6 +23,7 @@ var (
 	intToken    int
 	strToken    string
 	currentFunc string
+	labelNum    int
 
 	consts []string
 
@@ -102,6 +103,43 @@ func nextChar() {
 		line = line + 1
 		col = 0
 	}
+}
+
+func intStr(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	if n == 1 {
+		return "1"
+	}
+	if n == 2 {
+		return "2"
+	}
+	if n == 3 {
+		return "3"
+	}
+	if n == 4 {
+		return "4"
+	}
+	if n == 5 {
+		return "5"
+	}
+	if n == 6 {
+		return "6"
+	}
+	if n == 7 {
+		return "7"
+	}
+	if n == 8 {
+		return "8"
+	}
+	if n == 9 {
+		return "9"
+	}
+	if n < 0 {
+		return "-" + intStr(-n)
+	}
+	return intStr(n/10) + intStr(n%10)
 }
 
 func error(msg string) {
@@ -739,7 +777,8 @@ func genUnary(op int, typ int) {
 		print("neg rax\n")
 	} else if op == tNot {
 		print("cmp rax, 0\n")
-		print("setz rax\n")
+		print("mov rax, 0\n")
+		print("setz al\n")
 	}
 	print("push rax\n")
 }
@@ -769,7 +808,8 @@ func genBinaryString(op int) {
 		print("call _strEq\n")
 		print("add rsp, 32\n")
 		print("cmp rax, 0\n")
-		print("setz rax\n")
+		print("mov rax, 0\n")
+		print("setz al\n")
 		print("push rax\n")
 	} else {
 		error("operator " + tokenStr(op) + " not allowed on strings")
@@ -794,22 +834,28 @@ func genBinaryInt(op int) {
 		print("mov rax, rdx\n")
 	} else if op == tEq {
 		print("cmp rax, rbx\n")
-		print("sete rax\n")
+		print("mov rax, 0\n")
+		print("sete al\n")
 	} else if op == tNotEq {
 		print("cmp rax, rbx\n")
-		print("setne rax\n")
+		print("mov rax, 0\n")
+		print("setne al\n")
 	} else if op == tLess {
 		print("cmp rax, rbx\n")
-		print("setl rax\n")
+		print("mov rax, 0\n")
+		print("setl al\n")
 	} else if op == tLessEq {
 		print("cmp rax, rbx\n")
-		print("setle rax\n")
+		print("mov rax, 0\n")
+		print("setle al\n")
 	} else if op == tGreater {
 		print("cmp rax, rbx\n")
-		print("setg rax\n")
+		print("mov rax, 0\n")
+		print("setg al\n")
 	} else if op == tGreaterEq {
 		print("cmp rax, rbx\n")
-		print("setge rax\n")
+		print("mov rax, 0\n")
+		print("setge al\n")
 	} else if op == tAnd {
 		print("and rax, rbx\n")
 	} else if op == tOr {
@@ -828,6 +874,21 @@ func genReturn(typ int) {
 		error("can only return int or string")
 	}
 	genFuncEnd()
+}
+
+func genJumpIfZero(label string) {
+	print("pop rax\n")
+	print("cmp rax, 0\n")
+	print("jz " + label + "\n")
+}
+
+func genJump(label string) {
+	print("jmp " + label + "\n")
+}
+
+func genLabel(label string) {
+	print("\n")
+	print(label + ":\n")
 }
 
 // Parser functions
@@ -1192,7 +1253,11 @@ func SimpleStmt() {
 	if token == tIdent {
 		identName := strToken
 		nextToken()
-		if token == tDeclAssign {
+		if token == tAssign {
+			nextToken()
+			Expression() // TODO: check that LHS type = RHS type
+			genAssign(identName)
+		} else if token == tDeclAssign {
 			nextToken()
 			typ := Expression()
 			defineLocal(typ, identName)
@@ -1221,24 +1286,43 @@ func ReturnStmt() {
 	}
 }
 
+func newLabel() string {
+	labelNum = labelNum + 1
+	return "label" + intStr(labelNum)
+}
+
 func IfStmt() {
 	expect(tIf, "\"if\"")
 	Expression()
+	ifLabel := newLabel()
+	genJumpIfZero(ifLabel) // jump to else or end of if block
 	Block()
 	if token == tElse {
 		nextToken()
+		elseLabel := newLabel()
+		genJump(elseLabel) // jump past else block
+		genLabel(ifLabel)
 		if token == tIf {
 			IfStmt()
 		} else {
 			Block()
 		}
+		genLabel(elseLabel)
+	} else {
+		genLabel(ifLabel)
 	}
 }
 
 func ForStmt() {
 	expect(tFor, "\"for\"")
+	loopLabel := newLabel()
+	genLabel(loopLabel)
 	Expression()
+	doneLabel := newLabel()
+	genJumpIfZero(doneLabel)
 	Block()
+	genJump(loopLabel)
+	genLabel(doneLabel)
 }
 
 func Statement() {
@@ -1366,7 +1450,6 @@ func main() {
 	genProgramStart()
 
 	line = 1
-	col = 0
 	nextChar()
 	nextToken()
 	SourceFile()
