@@ -82,6 +82,7 @@ const (
 	tModulo    int = '%'
 	tComma     int = ','
 	tSemicolon int = ';'
+	tColon     int = ':'
 	tAssign    int = '='
 	tNot       int = '!'
 	tLess      int = '<'
@@ -339,6 +340,15 @@ func nextToken() {
 			token = tNot
 		}
 		return
+	} else if c == ':' {
+		nextChar()
+		if c == '=' {
+			nextChar()
+			token = tDeclAssign
+		} else {
+			token = tColon
+		}
+		return
 	}
 
 	// Two-character tokens
@@ -351,11 +361,6 @@ func nextToken() {
 		nextChar()
 		expectChar('&')
 		token = tAnd
-		return
-	} else if c == ':' {
-		nextChar()
-		expectChar('=')
-		token = tDeclAssign
 		return
 	}
 
@@ -468,6 +473,66 @@ func expect(expected int, msg string) {
 		error("expected " + msg + " not " + tokenStr(token))
 	}
 	nextToken()
+}
+
+func findLocal(name string) int {
+	i := 0
+	for i < len(locals) {
+		if locals[i] == name {
+			return i
+		}
+		i = i + 1
+	}
+	return -1
+}
+
+func findGlobal(name string) int {
+	i := 0
+	for i < len(globals) {
+		if globals[i] == name {
+			return i
+		}
+		i = i + 1
+	}
+	return -1
+}
+
+func findConst(name string) int {
+	i := 0
+	for i < len(consts) {
+		if consts[i] == name {
+			return i
+		}
+		i = i + 1
+	}
+	return -1
+}
+
+func findFunc(name string) int {
+	i := 0
+	for i < len(funcs) {
+		if funcs[i] == name {
+			return i
+		}
+		i = i + 1
+	}
+	return -1
+}
+
+func argsSize(funcName string) int {
+	i := findFunc(funcName)
+	if i < 0 {
+		error("function " + quoteStr(funcName, "\"") + " not defined")
+	}
+	sigIndex := funcSigIndexes[i]
+	numArgs := funcSigs[sigIndex+1]
+	size := 0
+	i = 0
+	for i < numArgs {
+		size = size + typeSize(funcSigs[sigIndex+2+i])
+		i = i + 1
+	}
+	return size
 }
 
 // Code generator functions
@@ -585,7 +650,7 @@ func localOffset(index int) int {
 	}
 }
 
-func genFetch(typ int, addr string) {
+func genFetchInstrs(typ int, addr string) {
 	if typ == typeInt {
 		print("push qword [" + addr + "]\n")
 	} else if typ == typeString {
@@ -601,14 +666,14 @@ func genFetch(typ int, addr string) {
 func genLocalFetch(index int) int {
 	offset := localOffset(index)
 	typ := localTypes[index]
-	genFetch(typ, "rbp+"+intStr(offset))
+	genFetchInstrs(typ, "rbp+"+intStr(offset))
 	return typ
 }
 
 func genGlobalFetch(index int) int {
 	name := globals[index]
 	typ := globalTypes[index]
-	genFetch(typ, name)
+	genFetchInstrs(typ, name)
 	return typ
 }
 
@@ -677,6 +742,43 @@ func genAssign(name string) {
 	error("identifier " + quoteStr(name, "\"") + " not defined (or not assignable)")
 }
 
+func varType(name string) int {
+	localIndex := findLocal(name)
+	if localIndex >= 0 {
+		return localTypes[localIndex]
+	}
+	globalIndex := findGlobal(name)
+	if globalIndex >= 0 {
+		return globalTypes[globalIndex]
+	}
+	error("identifier " + quoteStr(name, "\"") + " not defined")
+	return 0
+}
+
+func genSliceAssign(name string) {
+	typ := varType(name)
+	print("pop rax\n") // value (addr if string type)
+	if typ == typeSliceString {
+		print("pop rbx\n") // value (len)
+		print("pop rcx\n") // index * 2
+		print("add rcx, rcx\n")
+	} else {
+		print("pop rcx\n")
+	}
+	localIndex := findLocal(name)
+	if localIndex >= 0 {
+		offset := localOffset(localIndex)
+		print("mov rdx, [rbp+" + intStr(offset) + "]\n")
+	} else {
+		print("mov rdx, [" + name + "]\n")
+	}
+	// TODO: bounds checking!
+	print("mov [rdx+rcx*8], rax\n")
+	if typ == typeSliceString {
+		print("mov [rdx+rcx*8+8], rbx\n")
+	}
+}
+
 func genCall(name string) {
 	print("call " + name + "\n")
 	size := argsSize(name)
@@ -689,6 +791,10 @@ func genCall(name string) {
 	if resultType == typeInt {
 		print("push rax\n")
 	} else if resultType == typeString {
+		print("push rbx\n")
+		print("push rax\n")
+	} else if resultType == typeSliceInt || resultType == typeSliceString {
+		print("push rcx\n")
 		print("push rbx\n")
 		print("push rax\n")
 	}
@@ -751,27 +857,18 @@ func genUnary(op int, typ int) {
 	print("push rax\n")
 }
 
-func genBinary(op int, typ1 int, typ2 int) {
-	if typ1 != typ2 {
-		error("binary operands must be the same type")
-	}
-	if typ1 == typeString {
-		genBinaryString(op)
-	} else {
-		genBinaryInt(op)
-	}
-}
-
-func genBinaryString(op int) {
+func genBinaryString(op int) int {
 	if op == tPlus {
 		print("call _strAdd\n")
 		print("add rsp, 32\n")
 		print("push rbx\n")
 		print("push rax\n")
+		return typeString
 	} else if op == tEq {
 		print("call _strEq\n")
 		print("add rsp, 32\n")
 		print("push rax\n")
+		return typeInt
 	} else if op == tNotEq {
 		print("call _strEq\n")
 		print("add rsp, 32\n")
@@ -779,12 +876,14 @@ func genBinaryString(op int) {
 		print("mov rax, 0\n")
 		print("setz al\n")
 		print("push rax\n")
+		return typeInt
 	} else {
 		error("operator " + tokenStr(op) + " not allowed on strings")
+		return 0
 	}
 }
 
-func genBinaryInt(op int) {
+func genBinaryInt(op int) int {
 	print("pop rbx\n")
 	print("pop rax\n")
 	if op == tPlus {
@@ -830,6 +929,18 @@ func genBinaryInt(op int) {
 		print("or rax, rbx\n")
 	}
 	print("push rax\n")
+	return typeInt
+}
+
+func genBinary(op int, typ1 int, typ2 int) int {
+	if typ1 != typ2 {
+		error("binary operands must be the same type")
+	}
+	if typ1 == typeString {
+		return genBinaryString(op)
+	} else {
+		return genBinaryInt(op)
+	}
 }
 
 func genReturn(typ int) {
@@ -838,8 +949,10 @@ func genReturn(typ int) {
 	} else if typ == typeString {
 		print("pop rax\n")
 		print("pop rbx\n")
-	} else if typ != typeVoid {
-		error("can only return int or string")
+	} else {
+		print("pop rax\n")
+		print("pop rbx\n")
+		print("pop rcx\n")
 	}
 	genFuncEnd()
 }
@@ -859,6 +972,54 @@ func genLabel(label string) {
 	print(label + ":\n")
 }
 
+func genDiscard(typ int) {
+	size := typeSize(typ)
+	if size > 0 {
+		print("add rsp, " + intStr(typeSize(typ)) + "\n")
+	}
+}
+
+func genSliceExpr() {
+	// Slice expression of form slice[:max]
+	// TODO: bounds checking!
+	print("pop rax\n")  // max
+	print("pop rbx\n")  // addr
+	print("pop rcx\n")  // old length (capacity remains same)
+	print("push rax\n") // new length
+	print("push rbx\n") // addr remains same
+}
+
+func genSliceFetch(typ int) int {
+	// TODO: bounds checking!
+	if typ == typeString {
+		print("pop rax\n") // index
+		print("pop rbx\n") // addr
+		print("pop rcx\n") // len
+		print("xor rdx, rdx\n")
+		print("mov dl, [rbx+rax]\n")
+		print("push rdx\n")
+		return typeInt
+	} else if typ == typeSliceInt {
+		print("pop rax\n") // index
+		print("pop rbx\n") // addr
+		print("pop rcx\n") // len
+		print("pop rdx\n") // cap
+		print("push qword [rbx+rax*8]\n")
+		return typeInt
+	} else if typ == typeSliceString {
+		print("pop rax\n") // index
+		print("pop rbx\n") // addr
+		print("pop rcx\n") // len
+		print("pop rdx\n") // cap
+		print("push qword [rbx+rax*16+8]\n")
+		print("push qword [rbx+rax*16]\n")
+		return typeString
+	} else {
+		error("invalid slice type " + typeStr(typ))
+		return 0
+	}
+}
+
 // Parser functions
 
 func Literal() int {
@@ -876,48 +1037,8 @@ func Literal() int {
 	}
 }
 
-func findLocal(name string) int {
-	i := 0
-	for i < len(locals) {
-		if locals[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
-}
-
-func findGlobal(name string) int {
-	i := 0
-	for i < len(globals) {
-		if globals[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
-}
-
-func findConst(name string) int {
-	i := 0
-	for i < len(consts) {
-		if consts[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
-}
-
-func findFunc(name string) int {
-	i := 0
-	for i < len(funcs) {
-		if funcs[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
+func identifier(msg string) {
+	expect(tIdent, msg)
 }
 
 func Operand() int {
@@ -947,22 +1068,6 @@ func ExpressionList() {
 	}
 }
 
-func argsSize(funcName string) int {
-	i := findFunc(funcName)
-	if i < 0 {
-		error("function " + quoteStr(funcName, "\"") + " not defined")
-	}
-	sigIndex := funcSigIndexes[i]
-	numArgs := funcSigs[sigIndex+1]
-	size := 0
-	i = 0
-	for i < numArgs {
-		size = size + typeSize(funcSigs[sigIndex+2+i])
-		i = i + 1
-	}
-	return size
-}
-
 func Arguments() {
 	calledName := strToken // function name will still be in strToken
 	expect(tLParen, "(")
@@ -976,28 +1081,33 @@ func Arguments() {
 	genCall(calledName)
 }
 
-func Index() {
-	expect(tLBracket, "[")
-	Expression()
-	expect(tRBracket, "]")
+func indexExpr() {
+	typ := Expression()
+	if typ != typeInt {
+		error("slice index must be int")
+	}
 }
 
 func PrimaryExpr() int {
 	typ := Operand()
-	if token == tLParen {
+	if token == tLParen { // function call
 		Arguments()
 		return typ
 	} else if token == tLBracket {
-		Index()
-		if typ == typeString {
-			return typeInt
-		} else if typ == typeSliceInt {
-			return typeInt
-		} else if typ == typeSliceString {
-			return typeString
-		} else {
-			error("invalid slice type " + typeStr(typ))
+		nextToken()
+		if token == tColon {
+			if typ != typeSliceInt && typ != typeSliceString {
+				error("slice expression requires slice type")
+			}
+			nextToken()
+			indexExpr()
+			expect(tRBracket, "]")
+			genSliceExpr()
+			return typ
 		}
+		indexExpr()
+		expect(tRBracket, "]")
+		return genSliceFetch(typ)
 	}
 	return typ
 }
@@ -1014,67 +1124,63 @@ func UnaryExpr() int {
 }
 
 func mulExpr() int {
-	typ1 := UnaryExpr()
+	typ := UnaryExpr()
 	for token == tTimes || token == tDivide || token == tModulo {
 		op := token
 		nextToken()
-		typ2 := UnaryExpr()
-		genBinary(op, typ1, typ2)
+		typRight := UnaryExpr()
+		typ = genBinary(op, typ, typRight)
 	}
-	return typ1
+	return typ
 }
 
 func addExpr() int {
-	typ1 := mulExpr()
+	typ := mulExpr()
 	for token == tPlus || token == tMinus {
 		op := token
 		nextToken()
-		typ2 := mulExpr()
-		genBinary(op, typ1, typ2)
+		typRight := mulExpr()
+		typ = genBinary(op, typ, typRight)
 	}
-	return typ1
+	return typ
 }
 
 func comparisonExpr() int {
-	typ1 := addExpr()
+	typ := addExpr()
 	for token == tEq || token == tNotEq || token == tLess || token == tLessEq ||
 		token == tGreater || token == tGreaterEq {
 		op := token
 		nextToken()
-		typ2 := addExpr()
-		genBinary(op, typ1, typ2)
+		typRight := addExpr()
+		typ = genBinary(op, typ, typRight)
 	}
-	return typ1
+	return typ
 }
 
 func andExpr() int {
-	typ1 := comparisonExpr()
+	typ := comparisonExpr()
 	for token == tAnd {
 		op := token
 		nextToken()
-		typ2 := comparisonExpr()
-		genBinary(op, typ1, typ2)
+		typRight := comparisonExpr()
+		typ = genBinary(op, typ, typRight)
 	}
-	return typ1
+	return typ
 }
 
 func orExpr() int {
-	typ1 := andExpr()
+	typ := andExpr()
 	for token == tOr {
 		op := token
 		nextToken()
-		typ2 := andExpr()
-		genBinary(op, typ1, typ2)
+		typRight := andExpr()
+		typ = genBinary(op, typ, typRight)
 	}
-	return typ1
+	return typ
 }
 
 func Expression() int {
 	return orExpr()
-}
-
-func identifier(msg string) {
-	expect(tIdent, msg)
 }
 
 func PackageClause() {
@@ -1107,6 +1213,11 @@ func Type() int {
 		error("only int and string are supported")
 	}
 	return typeVoid
+}
+
+func defineLocal(typ int, name string) {
+	locals = append(locals, name)
+	localTypes = append(localTypes, typ)
 }
 
 func VarSpec() {
@@ -1213,11 +1324,6 @@ func Signature() {
 	}
 }
 
-func defineLocal(typ int, name string) {
-	locals = append(locals, name)
-	localTypes = append(localTypes, typ)
-}
-
 func SimpleStmt() {
 	// Funky parsing here to handle assignments
 	if token == tIdent {
@@ -1235,14 +1341,19 @@ func SimpleStmt() {
 		} else if token == tLParen {
 			genIdentifier(identName)
 			Arguments()
-		} else if token == tRBracket {
-			genIdentifier(identName)
-			Index()
+		} else if token == tLBracket {
+			nextToken()
+			indexExpr()
+			expect(tRBracket, "]")
+			expect(tAssign, "=")
+			Expression()
+			genSliceAssign(identName)
 		} else {
 			genIdentifier(identName)
 		}
 	} else {
-		Expression()
+		typ := Expression()
+		genDiscard(typ)
 	}
 }
 
@@ -1295,6 +1406,11 @@ func ForStmt() {
 	genLabel(doneLabel)
 }
 
+func Declaration() {
+	// We don't support ConstDecl or TypeDecl
+	VarDecl()
+}
+
 func Statement() {
 	if token == tVar {
 		Declaration()
@@ -1341,11 +1457,6 @@ func FunctionDecl() {
 	locals = locals[:0]
 	localTypes = localTypes[:0]
 	currentFunc = ""
-}
-
-func Declaration() {
-	// We don't support ConstDecl or TypeDecl
-	VarDecl()
 }
 
 func TopLevelDecl() {
@@ -1454,6 +1565,32 @@ func main() {
 	funcSigs = append(funcSigs, typeInt)
 	funcSigs = append(funcSigs, 1)
 	funcSigs = append(funcSigs, typeString) // TODO: handle string or slice
+
+	// Builtin: func int(x int) int
+	funcs = append(funcs, "int")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeInt)
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeInt)
+
+	// Builtin: func append(s slice) slice
+	funcs = append(funcs, "append")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeSliceInt) // TODO: also typeSliceString
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeSliceInt)
+
+	// Builtin: func Expression() int -- TODO hack for forward reference
+	funcs = append(funcs, "Expression")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeInt)
+	funcSigs = append(funcSigs, 0)
+
+	// Builtin: func Block() -- TODO hack for forward reference
+	funcs = append(funcs, "Block")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeVoid)
+	funcSigs = append(funcSigs, 0)
 
 	genProgramStart()
 
