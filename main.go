@@ -6,13 +6,11 @@ package main
 //
 // go run . <examples/test.go
 
-// types: T = byte int string []byte
-// - maybe? []T [n]T map[string]T struct *ptr bool
-// builtins: append cap copy len print println
-
-// parse and compile at once - can we pull this off?
-// - write to []byte and patch jumps?
-// - what about things used before they're defined?
+// TODO:
+// * implement append()
+// * ensure .bss is zeroed
+// * consistent/better naming, e.g., readByte -> getc, intStr -> itoa, printError -> log, ec
+// * consider "ret 8" style cleanup, better ABI, esp for locals than sub rsp, 160?
 
 var (
 	c    int
@@ -166,6 +164,7 @@ func nextToken() {
 	}
 
 	// Skip comments (and detect the '/' operator)
+	// TODO: can we do this all in skipWhitespace inline at the top?
 	for c == '/' {
 		nextChar()
 		if c != '/' {
@@ -304,6 +303,7 @@ func nextToken() {
 	}
 
 	// One or two-character tokens
+	// TODO: consider factoring out, e.g., tokenChoice('=', tEq, tAssign)
 	if c == '=' {
 		nextChar()
 		if c == '=' {
@@ -458,9 +458,7 @@ func typeSize(typ int) int {
 		return 8
 	} else if typ == typeString {
 		return 16
-	} else if typ == typeSliceInt {
-		return 24
-	} else if typ == typeSliceString {
+	} else if typ == typeSliceInt || typ == typeSliceString {
 		return 24
 	} else {
 		error("unknown type " + intStr(typ))
@@ -475,6 +473,7 @@ func expect(expected int, msg string) {
 	nextToken()
 }
 
+// TODO: consider factoring: find(names []string, name string) int
 func findLocal(name string) int {
 	i := 0
 	for i < len(locals) {
@@ -590,6 +589,22 @@ func genProgramStart() {
 	print("ret\n")
 	print("\n")
 
+	print("charStr:\n")
+	print("push rbp\n") // rbp ret ch
+	print("mov rbp, rsp\n")
+	// Allocate 1 byte
+	print("push 1\n")
+	print("call _alloc\n")
+	print("add rsp, 8\n")
+	// Move byte to destination
+	print("mov rbx, [rbp+16]\n")
+	print("mov [rax], bl\n")
+	// Return addrNew 1 (addrNew already in rax)
+	print("mov rbx, 1\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
+
 	// TODO: check for out of memory
 	print("_alloc:\n")
 	print("push rbp\n") // rbp ret size
@@ -597,6 +612,43 @@ func genProgramStart() {
 	print("mov rax, [_spacePtr]\n")
 	print("mov rbx, [rbp+16]\n")
 	print("add qword [_spacePtr], rbx\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
+
+	print("_appendInt:\n")
+	print("push rbp\n") // rbp ret value addr len cap
+	print("mov rbp, rsp\n")
+	// Ensure capacity is large enough
+	print("mov rax, [rbp+32]\n") // len
+	print("mov rbx, [rbp+40]\n") // cap
+	print("cmp rax, rbx\n")      // if len >= cap, resize
+	print("jl _appendInt1\n")
+	print("add rbx, rbx\n")    // double in size
+	print("jnz _appendInt2\n") // if it's zero, allocate minimum size
+	print("inc rbx\n")
+	print("_appendInt2:\n")
+	print("mov [rbp+40], rbx\n") // update cap
+	// Allocate newCap*8 bytes
+	print("lea rbx, [rbx*8]\n")
+	print("push rbx\n")
+	print("call _alloc\n")
+	print("add rsp, 8\n")
+	// Move from old array to new
+	print("mov rsi, [rbp+24]\n")
+	print("mov rdi, rax\n")
+	print("mov [rbp+24], rax\n") // update addr
+	print("mov rcx, [rbp+32]\n")
+	print("rep movsq\n")
+	// Set addr[len] = value
+	print("_appendInt1:\n")
+	print("mov rax, [rbp+24]\n") // addr
+	print("mov rbx, [rbp+32]\n") // len
+	print("mov rdx, [rbp+16]\n") // value
+	print("mov [rax+rbx*8], rdx\n")
+	// Return addr len+1 cap (in rax rbx rcx)
+	print("inc rbx\n")
+	print("mov rcx, [rbp+40]\n")
 	print("pop rbp\n")
 	print("ret\n")
 }
@@ -1059,25 +1111,37 @@ func Operand() int {
 	}
 }
 
-func ExpressionList() {
+func ExpressionList() int {
 	// TODO: this doesn't parse trailing commas correctly -- probably same for ParameterList
-	Expression()
+	firstType := Expression()
 	for token == tComma {
 		nextToken()
 		Expression()
 	}
+	return firstType
 }
 
 func Arguments() {
 	calledName := strToken // function name will still be in strToken
 	expect(tLParen, "(")
+	firstArgType := typeVoid
 	if token != tRParen {
-		ExpressionList()
+		firstArgType = ExpressionList()
 		if token == tComma {
 			nextToken()
 		}
 	}
 	expect(tRParen, ")")
+	if calledName == "append" {
+		if firstArgType == typeSliceInt {
+			genCall("_appendInt")
+		} else if firstArgType == typeSliceString {
+			genCall("_appendString")
+		} else {
+			error("can't append to " + typeStr(firstArgType))
+		}
+		return
+	}
 	genCall(calledName)
 }
 
@@ -1576,9 +1640,24 @@ func main() {
 	// Builtin: func append(s slice) slice
 	funcs = append(funcs, "append")
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeSliceInt) // TODO: also typeSliceString
-	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeSliceInt) // not the real type
+	funcSigs = append(funcSigs, 2)
 	funcSigs = append(funcSigs, typeSliceInt)
+	funcSigs = append(funcSigs, typeInt)
+
+	funcs = append(funcs, "_appendInt")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeSliceInt)
+	funcSigs = append(funcSigs, 2)
+	funcSigs = append(funcSigs, typeSliceInt)
+	funcSigs = append(funcSigs, typeInt)
+
+	funcs = append(funcs, "_appendString")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeSliceString)
+	funcSigs = append(funcSigs, 2)
+	funcSigs = append(funcSigs, typeSliceString)
+	funcSigs = append(funcSigs, typeInt)
 
 	// Builtin: func Expression() int -- TODO hack for forward reference
 	funcs = append(funcs, "Expression")
