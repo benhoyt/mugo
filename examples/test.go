@@ -1,19 +1,19 @@
 // A test
 package main
 
-var locals []int
+var locals []string
 
 func main() {
-	locals = append(locals, 65)
-	locals = append(locals, 66)
-	locals = append(locals, 67)
-	locals = append(locals, 68)
-	locals = append(locals, 69)
+	locals = append(locals, "xyz")
+	locals = append(locals, "foo")
+	locals = append(locals, "billy")
+	locals = append(locals, "Hello world")
+	locals = append(locals, "")
+	locals = append(locals, "...")
 	i := 0
 	s := ""
-	for i < 5 {
-		s = s + charStr(locals[i])
+	for i < 6 {
+		print(locals[i] + "\n")
 		i = i + 1
 	}
-	print(s + "\n")
 }

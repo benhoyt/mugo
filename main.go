@@ -651,6 +651,49 @@ func genProgramStart() {
 	print("mov rcx, [rbp+40]\n")
 	print("pop rbp\n")
 	print("ret\n")
+	print("\n")
+
+	print("_appendString:\n")
+	print("push rbp\n") // rbp ret 16strAddr 24strLen 32addr 40len 48cap
+	print("mov rbp, rsp\n")
+	// Ensure capacity is large enough
+	print("mov rax, [rbp+40]\n") // len
+	print("mov rbx, [rbp+48]\n") // cap
+	print("cmp rax, rbx\n")      // if len >= cap, resize
+	print("jl _appendInt3\n")
+	print("add rbx, rbx\n")    // double in size
+	print("jnz _appendInt4\n") // if it's zero, allocate minimum size
+	print("inc rbx\n")
+	print("_appendInt4:\n")
+	print("mov [rbp+48], rbx\n") // update cap
+	// Allocate newCap*16 bytes
+	print("add rbx, rbx\n")
+	print("lea rbx, [rbx*8]\n")
+	print("push rbx\n")
+	print("call _alloc\n")
+	print("add rsp, 8\n")
+	// Move from old array to new
+	print("mov rsi, [rbp+32]\n")
+	print("mov rdi, rax\n")
+	print("mov [rbp+32], rax\n") // update addr
+	print("mov rcx, [rbp+40]\n")
+	print("add rcx, rcx\n")
+	print("rep movsq\n")
+	// Set addr[len] = strValue
+	print("_appendInt3:\n")
+	print("mov rax, [rbp+32]\n") // addr
+	print("mov rbx, [rbp+40]\n") // len
+	print("add rbx, rbx\n")
+	print("mov rdx, [rbp+16]\n") // strAddr
+	print("mov [rax+rbx*8], rdx\n")
+	print("mov rdx, [rbp+24]\n") // strLen
+	print("mov [rax+rbx*8+8], rdx\n")
+	// Return addr len+1 cap (in rax rbx rcx)
+	print("mov rbx, [rbp+40]\n")
+	print("inc rbx\n")
+	print("mov rcx, [rbp+48]\n")
+	print("pop rbp\n")
+	print("ret\n")
 }
 
 func genConst(name string, value int) {
@@ -1063,8 +1106,9 @@ func genSliceFetch(typ int) int {
 		print("pop rbx\n") // addr
 		print("pop rcx\n") // len
 		print("pop rdx\n") // cap
-		print("push qword [rbx+rax*16+8]\n")
-		print("push qword [rbx+rax*16]\n")
+		print("add rax, rax\n")
+		print("push qword [rbx+rax*8+8]\n")
+		print("push qword [rbx+rax*8]\n")
 		return typeString
 	} else {
 		error("invalid slice type " + typeStr(typ))
@@ -1657,7 +1701,7 @@ func main() {
 	funcSigs = append(funcSigs, typeSliceString)
 	funcSigs = append(funcSigs, 2)
 	funcSigs = append(funcSigs, typeSliceString)
-	funcSigs = append(funcSigs, typeInt)
+	funcSigs = append(funcSigs, typeString)
 
 	// Builtin: func Expression() int -- TODO hack for forward reference
 	funcs = append(funcs, "Expression")
