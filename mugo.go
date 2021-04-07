@@ -145,6 +145,16 @@ func skipWhitespace() int {
 	return 0
 }
 
+func tokenChoice(oneCharToken int, secondCh int, twoCharToken int) {
+	nextChar()
+	if c == secondCh {
+		nextChar()
+		token = twoCharToken
+	} else {
+		token = oneCharToken
+	}
+}
+
 func nextToken() {
 	t := skipWhitespace()
 	if t != 0 {
@@ -298,51 +308,20 @@ func nextToken() {
 	}
 
 	// One or two-character tokens
-	// TODO: consider factoring out, e.g., tokenChoice('=', tEq, tAssign)
 	if c == '=' {
-		nextChar()
-		if c == '=' {
-			nextChar()
-			token = tEq
-		} else {
-			token = tAssign
-		}
+		tokenChoice(tAssign, '=', tEq)
 		return
 	} else if c == '<' {
-		nextChar()
-		if c == '=' {
-			nextChar()
-			token = tLessEq
-		} else {
-			token = tLess
-		}
+		tokenChoice(tLess, '=', tLessEq)
 		return
 	} else if c == '>' {
-		nextChar()
-		if c == '=' {
-			nextChar()
-			token = tGreaterEq
-		} else {
-			token = tGreater
-		}
+		tokenChoice(tGreater, '=', tGreaterEq)
 		return
 	} else if c == '!' {
-		nextChar()
-		if c == '=' {
-			nextChar()
-			token = tNotEq
-		} else {
-			token = tNot
-		}
+		tokenChoice(tNot, '=', tNotEq)
 		return
 	} else if c == ':' {
-		nextChar()
-		if c == '=' {
-			nextChar()
-			token = tDeclAssign
-		} else {
-			token = tColon
-		}
+		tokenChoice(tColon, '=', tDeclAssign)
 		return
 	}
 
@@ -470,44 +449,10 @@ func expect(expected int, msg string) {
 	nextToken()
 }
 
-// TODO: consider factoring: find(names []string, name string) int
-func findLocal(name string) int {
+func find(names []string, name string) int {
 	i := 0
-	for i < len(locals) {
-		if locals[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
-}
-
-func findGlobal(name string) int {
-	i := 0
-	for i < len(globals) {
-		if globals[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
-}
-
-func findConst(name string) int {
-	i := 0
-	for i < len(consts) {
-		if consts[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
-}
-
-func findFunc(name string) int {
-	i := 0
-	for i < len(funcs) {
-		if funcs[i] == name {
+	for i < len(names) {
+		if names[i] == name {
 			return i
 		}
 		i = i + 1
@@ -516,7 +461,7 @@ func findFunc(name string) int {
 }
 
 func argsSize(funcName string) int {
-	i := findFunc(funcName)
+	i := find(funcs, funcName)
 	if i < 0 {
 		error("function " + quoteStr(funcName, "\"") + " not defined")
 	}
@@ -750,7 +695,7 @@ func genProgramStart() {
 	print("pop rbp\n")
 	print("ret\n")
 
-	print("_lenString:\n")
+	print("len:\n")
 	print("push rbp\n") // rbp ret addr len
 	print("mov rbp, rsp\n")
 	print("mov rax, [rbp+24]\n")
@@ -758,8 +703,8 @@ func genProgramStart() {
 	print("ret\n")
 	print("\n")
 
-	print("_lenSlice:\n") // TODO: can be same as above?
-	print("push rbp\n")   // rbp ret addr len cap
+	print("_lenSlice:\n")
+	print("push rbp\n") // rbp ret addr len cap
 	print("mov rbp, rsp\n")
 	print("mov rax, [rbp+24]\n")
 	print("pop rbp\n")
@@ -792,7 +737,7 @@ func genStrLit(s string) {
 }
 
 func localOffset(index int) int {
-	funcIndex := findFunc(currentFunc)
+	funcIndex := find(funcs, currentFunc)
 	sigIndex := funcSigIndexes[funcIndex]
 	numArgs := funcSigs[sigIndex+1]
 	if index < numArgs {
@@ -850,19 +795,19 @@ func genConstFetch(index int) int {
 }
 
 func genIdentifier(name string) int {
-	localIndex := findLocal(name)
+	localIndex := find(locals, name)
 	if localIndex >= 0 {
 		return genLocalFetch(localIndex)
 	}
-	globalIndex := findGlobal(name)
+	globalIndex := find(globals, name)
 	if globalIndex >= 0 {
 		return genGlobalFetch(globalIndex)
 	}
-	constIndex := findConst(name)
+	constIndex := find(consts, name)
 	if constIndex >= 0 {
 		return genConstFetch(constIndex)
 	}
-	funcIndex := findFunc(name)
+	funcIndex := find(funcs, name)
 	if funcIndex >= 0 {
 		sigIndex := funcSigIndexes[funcIndex]
 		return funcSigs[sigIndex] // result type
@@ -895,12 +840,12 @@ func genGlobalAssign(index int) {
 }
 
 func genAssign(name string) {
-	localIndex := findLocal(name)
+	localIndex := find(locals, name)
 	if localIndex >= 0 {
 		genLocalAssign(localIndex)
 		return
 	}
-	globalIndex := findGlobal(name)
+	globalIndex := find(globals, name)
 	if globalIndex >= 0 {
 		genGlobalAssign(globalIndex)
 		return
@@ -909,11 +854,11 @@ func genAssign(name string) {
 }
 
 func varType(name string) int {
-	localIndex := findLocal(name)
+	localIndex := find(locals, name)
 	if localIndex >= 0 {
 		return localTypes[localIndex]
 	}
-	globalIndex := findGlobal(name)
+	globalIndex := find(globals, name)
 	if globalIndex >= 0 {
 		return globalTypes[globalIndex]
 	}
@@ -931,7 +876,7 @@ func genSliceAssign(name string) {
 	} else {
 		print("pop rcx\n")
 	}
-	localIndex := findLocal(name)
+	localIndex := find(locals, name)
 	if localIndex >= 0 {
 		offset := localOffset(localIndex)
 		print("mov rdx, [rbp+" + intStr(offset) + "]\n")
@@ -945,13 +890,13 @@ func genSliceAssign(name string) {
 	}
 }
 
-func genCall(name string) {
+func genCall(name string) int {
 	print("call " + name + "\n")
 	size := argsSize(name)
 	if size > 0 {
 		print("add rsp, " + intStr(size) + "\n")
 	}
-	index := findFunc(name)
+	index := find(funcs, name)
 	sigIndex := funcSigIndexes[index]
 	resultType := funcSigs[sigIndex]
 	if resultType == typeInt {
@@ -964,6 +909,7 @@ func genCall(name string) {
 		print("push rbx\n")
 		print("push rax\n")
 	}
+	return resultType
 }
 
 func genFuncStart(name string) {
@@ -1227,7 +1173,6 @@ func Operand() int {
 }
 
 func ExpressionList() int {
-	// TODO: this doesn't parse trailing commas correctly -- probably same for ParameterList
 	firstType := Expression()
 	for token == tComma {
 		nextToken()
@@ -1236,8 +1181,8 @@ func ExpressionList() int {
 	return firstType
 }
 
-func Arguments() {
-	calledName := strToken // function name will still be in strToken
+func Arguments() int {
+	funcName := strToken // function name will still be in strToken
 	expect(tLParen, "(")
 	firstArgType := typeVoid
 	if token != tRParen {
@@ -1249,29 +1194,24 @@ func Arguments() {
 	expect(tRParen, ")")
 
 	// "Generic" built-in functions
-	if calledName == "append" {
+	if funcName == "append" {
 		if firstArgType == typeSliceInt {
-			genCall("_appendInt")
+			funcName = "_appendInt"
 		} else if firstArgType == typeSliceString {
-			genCall("_appendString")
+			funcName = "_appendString"
 		} else {
 			error("can't append to " + typeStr(firstArgType))
 		}
-		return
-	}
-	if calledName == "len" {
+	} else if funcName == "len" {
 		if firstArgType == typeString {
-			genCall("_lenString")
+			funcName = "len"
 		} else if firstArgType == typeSliceInt || firstArgType == typeSliceString {
-			genCall("_lenSlice")
+			funcName = "_lenSlice"
 		} else {
 			error("can't get length of " + typeStr(firstArgType))
 		}
-		return
 	}
-
-	// Normal function call
-	genCall(calledName)
+	return genCall(funcName)
 }
 
 func indexExpr() {
@@ -1284,8 +1224,7 @@ func indexExpr() {
 func PrimaryExpr() int {
 	typ := Operand()
 	if token == tLParen { // function call
-		Arguments()
-		return typ
+		return Arguments()
 	} else if token == tLBracket {
 		nextToken()
 		if token == tColon {
@@ -1524,7 +1463,11 @@ func SimpleStmt() {
 		nextToken()
 		if token == tAssign {
 			nextToken()
-			Expression() // TODO: check that LHS type = RHS type
+			lhsType := varType(identName)
+			rhsType := Expression()
+			if lhsType != rhsType {
+				error("can't assign " + typeStr(rhsType) + " to " + typeStr(lhsType))
+			}
 			genAssign(identName)
 		} else if token == tDeclAssign {
 			nextToken()
@@ -1677,44 +1620,6 @@ func SourceFile() {
 	expect(tEOF, "end of file")
 }
 
-// TODO: remove
-func dumpFuncs() {
-	i := 0
-	for i < len(funcs) {
-		print("FUNC: " + funcs[i] + "(")
-		sigIndex := funcSigIndexes[i]
-		resultType := funcSigs[sigIndex]
-		numArgs := funcSigs[sigIndex+1]
-		j := 0
-		for j < numArgs {
-			argType := funcSigs[sigIndex+2+j]
-			print(typeStr(argType))
-			if j < numArgs-1 {
-				print(", ")
-			}
-			j = j + 1
-		}
-		print(") " + typeStr(resultType) + "\n")
-		i = i + 1
-	}
-}
-
-// TODO: remove
-func dumpLocals() {
-	i := 0
-	for i < len(locals) {
-		typ := localTypes[i]
-		if typ == typeInt {
-			print(locals[i] + ": dq 0; " + intStr(localOffset(i)) + "\n")
-		} else if typ == typeString {
-			print(locals[i] + ": dq 0, 0\n") // string: address, length
-		} else {
-			print(locals[i] + ": dq 0, 0, 0\n") // slice: address, length, capacity
-		}
-		i = i + 1
-	}
-}
-
 func main() {
 	// Builtin: func print(s string)
 	funcs = append(funcs, "print")
@@ -1722,8 +1627,6 @@ func main() {
 	funcSigs = append(funcSigs, typeVoid)
 	funcSigs = append(funcSigs, 1)
 	funcSigs = append(funcSigs, typeString)
-
-	// TODO: define these in genProgramStart
 
 	// Builtin: func printError(s string)
 	funcs = append(funcs, "printError")
@@ -1754,12 +1657,6 @@ func main() {
 
 	// Builtin: func len(s stringOrSlice) int
 	funcs = append(funcs, "len")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeInt)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeString)
-
-	funcs = append(funcs, "_lenString")
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
 	funcSigs = append(funcSigs, typeInt)
 	funcSigs = append(funcSigs, 1)
@@ -1800,13 +1697,13 @@ func main() {
 	funcSigs = append(funcSigs, typeSliceString)
 	funcSigs = append(funcSigs, typeString)
 
-	// Builtin: func Expression() int -- TODO hack for forward reference
+	// Forward reference: func Expression() int
 	funcs = append(funcs, "Expression")
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
 	funcSigs = append(funcSigs, typeInt)
 	funcSigs = append(funcSigs, 0)
 
-	// Builtin: func Block() -- TODO hack for forward reference
+	// Forward reference: func Block()
 	funcs = append(funcs, "Block")
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
 	funcSigs = append(funcSigs, typeVoid)
