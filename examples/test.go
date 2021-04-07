@@ -11,22 +11,21 @@ func intStr(n int) string {
 	return intStr(n/10) + intStr(n%10)
 }
 
-var s string
-var sl []int
+var (
+	c int
+	line int
+	col int
+)
+
+func nextChar() {
+	c = readByte()
+	col = col + 1
+	if c == '\n' {
+		line = line + 1
+		col = 0
+	}
+}
 
 func main() {
-	s = "foo"
-	print(intStr(len(s)) + "\n")
-	print(intStr(len("foobar")) + "\n")
-	print("\n")
-	print(intStr(len(sl)) + "\n")
-	sl = append(sl, 1)
-	sl = append(sl, 2)
-	sl = append(sl, 3)
-	sl = append(sl, 4)
-	print(intStr(len(sl)) + "\n")
-	sl = sl[:2]
-	print(intStr(len(sl)) + "\n")
-	sl = sl[:0]
-	print(intStr(len(sl)) + "\n")
+	nextChar()
 }

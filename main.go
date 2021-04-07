@@ -2,10 +2,6 @@
 
 package main
 
-// Run with this command:
-//
-// go run . <examples/test.go
-
 // TODO:
 // * ensure .bss is zeroed
 // * consistent/better naming, e.g., readByte -> getc, intStr -> itoa, printError -> log, ec
@@ -380,6 +376,8 @@ func quoteStr(s string, delim string) string {
 			quoted = quoted + "\\r"
 		} else if s[i] == '\n' {
 			quoted = quoted + "\\n"
+		} else if s[i] == '`' {
+			quoted = quoted + "\\`"
 		} else {
 			quoted = quoted + charStr(int(s[i]))
 		}
@@ -561,6 +559,44 @@ func genProgramStart() {
 	print("ret\n")
 	print("\n")
 
+	print("printError:\n")
+	print("push rbp\n") // rbp ret addr len
+	print("mov rbp, rsp\n")
+	print("mov rax, 1\n")        // system call for "write"
+	print("mov rdi, 2\n")        // file handle 2 is stderr
+	print("mov rsi, [rbp+16]\n") // address
+	print("mov rdx, [rbp+24]\n") // length
+	print("syscall\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
+
+	print("readByte:\n")
+	print("push qword 0\n")
+	print("mov rax, 0\n")   // system call for "read"
+	print("mov rdi, 0\n")   // file handle 0 is stdin
+	print("mov rsi, rsp\n") // address
+	print("mov rdx, 1\n")   // length
+	print("syscall\n")
+	print("cmp rax, 1\n")
+	print("je _readByte1\n")
+	print("mov qword [rsp], -1\n")
+	print("_readByte1:\n")
+	print("pop rax\n")
+	print("ret\n")
+	print("\n")
+
+	print("exit:\n")
+	print("mov rdi, [rsp+8]\n") // code
+	print("mov rax, 60\n")      // system call for "exit"
+	print("syscall\n")
+	print("\n")
+
+	print("int:\n")
+	print("mov rax, [rsp+8]\n") // value
+	print("ret\n")
+	print("\n")
+
 	print("_strAdd:\n")
 	print("push rbp\n") // rbp ret addr1 len1 addr0 len0
 	print("mov rbp, rsp\n")
@@ -584,6 +620,26 @@ func genProgramStart() {
 	// Return addrNew len0+len1 (addrNew already in rax)
 	print("mov rbx, [rbp+24]\n")
 	print("add rbx, [rbp+40]\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
+
+	print("_strEq:\n")
+	print("push rbp\n") // rbp ret addr1 len1 addr0 len0
+	print("mov rbp, rsp\n")
+	print("mov rcx, [rbp+40]\n")
+	print("cmp rcx, [rbp+24]\n")
+	print("jne _strEqNotEqual\n")
+	print("mov rsi, [rbp+16]\n")
+	print("mov rdi, [rbp+32]\n")
+	print("rep cmpsb\n")
+	print("jne _strEqNotEqual\n")
+	print("mov rax, 1\n")
+	print("pop rbp\n")
+	print("ret\n")
+	// Return addrNew len0+len1 (addrNew already in rax)
+	print("_strEqNotEqual:\n")
+	print("xor rax, rax\n")
 	print("pop rbp\n")
 	print("ret\n")
 	print("\n")
@@ -949,7 +1005,7 @@ func genDataSections() {
 	print("\n")
 	print("section .bss\n")
 	print("_spacePtr: resq 1\n")
-	print("_space: resb 1048576\n")
+	print("_space: resb 10485760\n")
 }
 
 func genUnary(op int, typ int) {
@@ -1059,7 +1115,7 @@ func genReturn(typ int) {
 	} else if typ == typeString {
 		print("pop rax\n")
 		print("pop rbx\n")
-	} else {
+	} else if typ == typeSliceInt || typ == typeSliceString {
 		print("pop rax\n")
 		print("pop rbx\n")
 		print("pop rcx\n")
