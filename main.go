@@ -7,7 +7,6 @@ package main
 // go run . <examples/test.go
 
 // TODO:
-// * implement append()
 // * ensure .bss is zeroed
 // * consistent/better naming, e.g., readByte -> getc, intStr -> itoa, printError -> log, ec
 // * consider "ret 8" style cleanup, better ABI, esp for locals than sub rsp, 160?
@@ -694,6 +693,22 @@ func genProgramStart() {
 	print("mov rcx, [rbp+48]\n")
 	print("pop rbp\n")
 	print("ret\n")
+
+	print("_lenString:\n")
+	print("push rbp\n") // rbp ret addr len
+	print("mov rbp, rsp\n")
+	print("mov rax, [rbp+24]\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
+
+	print("_lenSlice:\n") // TODO: can be same as above?
+	print("push rbp\n")   // rbp ret addr len cap
+	print("mov rbp, rsp\n")
+	print("mov rax, [rbp+24]\n")
+	print("pop rbp\n")
+	print("ret\n")
+	print("\n")
 }
 
 func genConst(name string, value int) {
@@ -1176,6 +1191,8 @@ func Arguments() {
 		}
 	}
 	expect(tRParen, ")")
+
+	// "Generic" built-in functions
 	if calledName == "append" {
 		if firstArgType == typeSliceInt {
 			genCall("_appendInt")
@@ -1186,6 +1203,18 @@ func Arguments() {
 		}
 		return
 	}
+	if calledName == "len" {
+		if firstArgType == typeString {
+			genCall("_lenString")
+		} else if firstArgType == typeSliceInt || firstArgType == typeSliceString {
+			genCall("_lenSlice")
+		} else {
+			error("can't get length of " + typeStr(firstArgType))
+		}
+		return
+	}
+
+	// Normal function call
 	genCall(calledName)
 }
 
@@ -1672,7 +1701,19 @@ func main() {
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
 	funcSigs = append(funcSigs, typeInt)
 	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeString) // TODO: handle string or slice
+	funcSigs = append(funcSigs, typeString)
+
+	funcs = append(funcs, "_lenString")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeInt)
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeString)
+
+	funcs = append(funcs, "_lenSlice")
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, typeInt)
+	funcSigs = append(funcSigs, 1)
+	funcSigs = append(funcSigs, typeSliceInt) // works with typeSliceString too
 
 	// Builtin: func int(x int) int
 	funcs = append(funcs, "int")
