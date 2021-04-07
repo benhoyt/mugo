@@ -721,6 +721,7 @@ func genIntLit(n int) {
 }
 
 func genStrLit(s string) {
+	// TODO: could look up and return existing string
 	// Add string to strs and strAddrs tables
 	if len(strs) == 0 {
 		strs = append(strs, s)
@@ -891,8 +892,8 @@ func genSliceAssign(name string) {
 }
 
 func genCall(name string) int {
-	print("call " + name + "\n")
 	size := argsSize(name)
+	print("call " + name + "  ; argsSize=" + intStr(size) + "\n")
 	if size > 0 {
 		print("add rsp, " + intStr(size) + "\n")
 	}
@@ -1476,7 +1477,8 @@ func SimpleStmt() {
 			genAssign(identName)
 		} else if token == tLParen {
 			genIdentifier(identName)
-			Arguments()
+			typ := Arguments()
+			genDiscard(typ)
 		} else if token == tLBracket {
 			nextToken()
 			indexExpr()
@@ -1488,6 +1490,7 @@ func SimpleStmt() {
 			genIdentifier(identName)
 		}
 	} else {
+		exit(1) // TODO: this block isn't used -- error here
 		typ := Expression()
 		genDiscard(typ)
 	}
@@ -1621,6 +1624,7 @@ func SourceFile() {
 }
 
 func main() {
+	// TODO: add helper functions to simplify this
 	// Builtin: func print(s string)
 	funcs = append(funcs, "print")
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
