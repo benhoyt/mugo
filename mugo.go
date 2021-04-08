@@ -4,8 +4,7 @@ package main
 
 // TODO:
 // * ensure .bss is zeroed
-// * consider "ret 8" style cleanup, better ABI, esp for locals than sub rsp, 160?
-// https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64
+// * better handling of locals than sub rsp, 160?
 
 var (
 	// Lexer variables
@@ -408,7 +407,7 @@ func genProgramStart() {
 	print("mov rdx, [rbp+24]\n") // length
 	print("syscall\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 16\n")
 	print("\n")
 
 	print("log:\n")
@@ -420,7 +419,7 @@ func genProgramStart() {
 	print("mov rdx, [rbp+24]\n") // length
 	print("syscall\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 16\n")
 	print("\n")
 
 	print("getc:\n")
@@ -446,7 +445,7 @@ func genProgramStart() {
 
 	print("int:\n")
 	print("mov rax, [rsp+8]\n") // value
-	print("ret\n")
+	print("ret 8\n")
 	print("\n")
 
 	print("_strAdd:\n")
@@ -457,7 +456,6 @@ func genProgramStart() {
 	print("add rax, [rbp+40]\n") // len1 + len0
 	print("push rax\n")
 	print("call _alloc\n")
-	print("add rsp, 8\n")
 	// Move len0 bytes from addr0 to addrNew
 	print("mov rsi, [rbp+32]\n")
 	print("mov rdi, rax\n")
@@ -473,7 +471,7 @@ func genProgramStart() {
 	print("mov rbx, [rbp+24]\n")
 	print("add rbx, [rbp+40]\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 32\n")
 	print("\n")
 
 	print("_strEq:\n")
@@ -488,12 +486,12 @@ func genProgramStart() {
 	print("jne _strEqNotEqual\n")
 	print("mov rax, 1\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 32\n")
 	// Return addrNew len0+len1 (addrNew already in rax)
 	print("_strEqNotEqual:\n")
 	print("xor rax, rax\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 32\n")
 	print("\n")
 
 	print("char:\n")
@@ -502,25 +500,32 @@ func genProgramStart() {
 	// Allocate 1 byte
 	print("push 1\n")
 	print("call _alloc\n")
-	print("add rsp, 8\n")
 	// Move byte to destination
 	print("mov rbx, [rbp+16]\n")
 	print("mov [rax], bl\n")
 	// Return addrNew 1 (addrNew already in rax)
 	print("mov rbx, 1\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 8\n")
 	print("\n")
 
-	// TODO: check for out of memory
 	print("_alloc:\n")
 	print("push rbp\n") // rbp ret size
 	print("mov rbp, rsp\n")
 	print("mov rax, [_spacePtr]\n")
 	print("mov rbx, [rbp+16]\n")
-	print("add qword [_spacePtr], rbx\n")
+	print("add rbx, [_spacePtr]\n")
+	print("cmp rbx, _spaceEnd\n")
+	print("jg _outOfMem\n")
+	print("mov [_spacePtr], rbx\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 8\n")
+	print("_outOfMem:\n")
+	print("push qword 14\n") // len("out of memory\n")
+	print("push _strOutOfMem\n")
+	print("call log\n")
+	print("push qword 1\n")
+	print("call exit\n")
 	print("\n")
 
 	print("_appendInt:\n")
@@ -540,7 +545,6 @@ func genProgramStart() {
 	print("lea rbx, [rbx*8]\n")
 	print("push rbx\n")
 	print("call _alloc\n")
-	print("add rsp, 8\n")
 	// Move from old array to new
 	print("mov rsi, [rbp+24]\n")
 	print("mov rdi, rax\n")
@@ -557,7 +561,7 @@ func genProgramStart() {
 	print("inc rbx\n")
 	print("mov rcx, [rbp+40]\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 32\n")
 	print("\n")
 
 	print("_appendString:\n")
@@ -578,7 +582,6 @@ func genProgramStart() {
 	print("lea rbx, [rbx*8]\n")
 	print("push rbx\n")
 	print("call _alloc\n")
-	print("add rsp, 8\n")
 	// Move from old array to new
 	print("mov rsi, [rbp+32]\n")
 	print("mov rdi, rax\n")
@@ -600,14 +603,14 @@ func genProgramStart() {
 	print("inc rbx\n")
 	print("mov rcx, [rbp+48]\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 40\n")
 
 	print("len:\n")
 	print("push rbp\n") // rbp ret addr len
 	print("mov rbp, rsp\n")
 	print("mov rax, [rbp+24]\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 16\n")
 	print("\n")
 
 	print("_lenSlice:\n")
@@ -615,7 +618,7 @@ func genProgramStart() {
 	print("mov rbp, rsp\n")
 	print("mov rax, [rbp+24]\n")
 	print("pop rbp\n")
-	print("ret\n")
+	print("ret 24\n")
 	print("\n")
 }
 
@@ -795,10 +798,6 @@ func genSliceAssign(name string) {
 
 func genCall(name string) int {
 	print("call " + name + "\n")
-	size := argsSize(name)
-	if size > 0 {
-		print("add rsp, " + itoa(size) + "\n")
-	}
 	index := find(funcs, name)
 	sigIndex := funcSigIndexes[index]
 	resultType := funcSigs[sigIndex]
@@ -826,12 +825,18 @@ func genFuncStart(name string) {
 func genFuncEnd() {
 	print("add rsp, 160\n")
 	print("pop rbp\n")
-	print("ret\n")
+	size := argsSize(curFunc)
+	if size > 0 {
+		print("ret " + itoa(size) + "\n")
+	} else {
+		print("ret\n")
+	}
 }
 
 func genDataSections() {
 	print("\n")
 	print("section .data\n")
+	print("_strOutOfMem: db `out of memory\\n`\n")
 	i := 0
 	for i < len(strs) {
 		print("str" + itoa(i) + ": db " + quote(strs[i], "`") + "\n")
@@ -854,7 +859,8 @@ func genDataSections() {
 	print("\n")
 	print("section .bss\n")
 	print("_spacePtr: resq 1\n")
-	print("_space: resb 10485760\n")
+	print("_space: resb 1024*1024\n") // 1MB "heap"
+	print("_spaceEnd:\n")
 }
 
 func genUnary(op int, typ int) {
@@ -875,18 +881,15 @@ func genUnary(op int, typ int) {
 func genBinaryString(op int) int {
 	if op == tPlus {
 		print("call _strAdd\n")
-		print("add rsp, 32\n")
 		print("push rbx\n")
 		print("push rax\n")
 		return typeString
 	} else if op == tEq {
 		print("call _strEq\n")
-		print("add rsp, 32\n")
 		print("push rax\n")
 		return typeInt
 	} else if op == tNotEq {
 		print("call _strEq\n")
-		print("add rsp, 32\n")
 		print("cmp rax, 0\n")
 		print("mov rax, 0\n")
 		print("setz al\n")
@@ -1351,7 +1354,7 @@ func SimpleStmt() {
 	} else if token == tLParen {
 		genIdentifier(identName)
 		typ := Arguments()
-		genDiscard(typ)
+		genDiscard(typ) // discard return value
 	} else if token == tLBracket {
 		next()
 		indexExpr()
