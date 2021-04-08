@@ -4,42 +4,41 @@ package main
 
 // TODO:
 // * ensure .bss is zeroed
-// * consistent/better naming, e.g., readByte -> getc, intStr -> itoa, printError -> log, ec
 // * consider "ret 8" style cleanup, better ABI, esp for locals than sub rsp, 160?
+// https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64
 
 var (
-	c    int
-	line int
+	// Lexer variables
+	c    int // current lexer byte
+	line int // current line and column
 	col  int
 
-	token       int
-	intToken    int
-	strToken    string
-	currentFunc string
-	labelNum    int
-
-	consts []string
-
-	globals     []string
-	globalTypes []int
-
-	locals     []string
-	localTypes []int
-
-	funcs          []string
-	funcSigIndexes []int // indexes into funcSigs
-	funcSigs       []int // for each func: retType N arg1Type ... argNType
-
-	strs     []string
-	strAddrs []int
+	// Parser-compiler variables
+	token          int      // current parser token
+	tokenInt       int      // integer value of current token (if applicable)
+	tokenStr       string   // string value of current token (if applicable)
+	curFunc        string   // current function name, or "" if not in a func
+	tokens         []string // token names
+	types          []string // type names
+	typeSizes      []int    // type sizes in bytes
+	labelNum       int      // current label number
+	consts         []string // constant names
+	globals        []string // global names and types
+	globalTypes    []int
+	locals         []string // local names and types
+	localTypes     []int
+	funcs          []string // function names
+	funcSigIndexes []int    // indexes into funcSigs
+	funcSigs       []int    // for each func: retType N arg1Type ... argNType
+	strs           []string // string constants
 )
 
 const (
-	typeVoid        int = 1
-	typeInt         int = 2
-	typeString      int = 3
-	typeSliceInt    int = 4
-	typeSliceString int = 5
+	typeVoid     int = 1
+	typeInt      int = 2
+	typeString   int = 3
+	typeSliceInt int = 4
+	typeSliceStr int = 5
 )
 
 const (
@@ -53,19 +52,20 @@ const (
 	tReturn  int = 7
 	tPackage int = 8
 
-	// Literals and identifiers
+	// Literals, identifiers, and EOF
 	tIntLit int = 9
 	tStrLit int = 10
 	tIdent  int = 11
+	tEOF    int = 12
 
 	// Two-character tokens
-	tOr         int = 12
-	tAnd        int = 13
-	tEq         int = 14
-	tNotEq      int = 15
-	tLessEq     int = 16
-	tGreaterEq  int = 17
-	tDeclAssign int = 18
+	tOr         int = 13
+	tAnd        int = 14
+	tEq         int = 15
+	tNotEq      int = 16
+	tLessEq     int = 17
+	tGreaterEq  int = 18
+	tDeclAssign int = 19
 
 	// Single-character tokens (these use the ASCII value)
 	tPlus      int = '+'
@@ -86,31 +86,31 @@ const (
 	tRBrace    int = '}'
 	tLBracket  int = '['
 	tRBracket  int = ']'
-
-	tEOF int = 256
 )
 
+// Lexer
+
 func nextChar() {
-	c = readByte()
-	col = col + 1
 	if c == '\n' {
 		line = line + 1
 		col = 0
 	}
+	c = getc()
+	col = col + 1
 }
 
-func intStr(n int) string {
+func itoa(n int) string {
 	if n < 0 {
-		return "-" + intStr(-n)
+		return "-" + itoa(-n)
 	}
 	if n < 10 {
-		return charStr(n + '0')
+		return char(n + '0')
 	}
-	return intStr(n/10) + intStr(n%10)
+	return itoa(n/10) + itoa(n%10)
 }
 
 func error(msg string) {
-	printError("\n" + intStr(line) + ":" + intStr(col) + ": " + msg + "\n")
+	log("\n" + itoa(line) + ":" + itoa(col) + ": " + msg + "\n")
 	exit(1)
 }
 
@@ -122,27 +122,22 @@ func isAlpha(ch int) bool {
 	return ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z'
 }
 
-func expectChar(ch int) {
-	if c != ch {
-		error("expected '" + charStr(ch) + "' not '" + charStr(c) + "'")
+func find(names []string, name string) int {
+	i := 0
+	for i < len(names) {
+		if names[i] == name {
+			return i
+		}
+		i = i + 1
 	}
-	nextChar()
+	return -1
 }
 
-func skipWhitespace() int {
-	for c == ' ' || c == '\t' || c == '\r' || c == '\n' {
-		if c == '\n' {
-			// Semicolon insertion: https://golang.org/ref/spec#Semicolons
-			if token == tIdent || token == tIntLit || token == tStrLit ||
-				token == tReturn || token == tRParen || token == tRBracket ||
-				token == tRBrace {
-				nextChar()
-				return tSemicolon
-			}
-		}
-		nextChar()
+func expectChar(ch int) {
+	if c != ch {
+		error("expected '" + char(ch) + "' not '" + char(c) + "'")
 	}
-	return 0
+	nextChar()
 }
 
 func tokenChoice(oneCharToken int, secondCh int, twoCharToken int) {
@@ -155,45 +150,45 @@ func tokenChoice(oneCharToken int, secondCh int, twoCharToken int) {
 	}
 }
 
-func nextToken() {
-	t := skipWhitespace()
-	if t != 0 {
-		token = t
-		return
+func next() {
+	// Skip whitespace and comments, and look for / operator
+	for c == '/' || c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+		if c == '/' {
+			nextChar()
+			if c != '/' {
+				token = tDivide
+				return
+			}
+			nextChar()
+			// Comment, skip till end of line
+			for c >= 0 && c != '\n' {
+				nextChar()
+			}
+		} else if c == '\n' {
+			nextChar()
+			// Semicolon insertion: https://golang.org/ref/spec#Semicolons
+			if token == tIdent || token == tIntLit || token == tStrLit ||
+				token == tReturn || token == tRParen || token == tRBracket ||
+				token == tRBrace {
+				token = tSemicolon
+				return
+			}
+		} else {
+			nextChar()
+		}
 	}
-
 	if c < 0 {
 		// End of file
 		token = tEOF
 		return
 	}
 
-	// Skip comments (and detect the '/' operator)
-	// TODO: can we do this all in skipWhitespace inline at the top?
-	for c == '/' {
-		nextChar()
-		if c != '/' {
-			token = tDivide
-			return
-		}
-		nextChar()
-		// Comment, skip till end of line
-		for c >= 0 && c != '\n' {
-			nextChar()
-		}
-		t := skipWhitespace()
-		if t != 0 {
-			token = t
-			return
-		}
-	}
-
 	// Integer literal
 	if isDigit(c) {
-		intToken = c - '0'
+		tokenInt = c - '0'
 		nextChar()
 		for isDigit(c) {
-			intToken = intToken*10 + c - '0'
+			tokenInt = tokenInt*10 + c - '0'
 			nextChar()
 		}
 		token = tIntLit
@@ -210,21 +205,21 @@ func nextToken() {
 			// Escape character
 			nextChar()
 			if c == '\'' {
-				intToken = '\''
+				tokenInt = '\''
 			} else if c == '\\' {
-				intToken = '\\'
+				tokenInt = '\\'
 			} else if c == 't' {
-				intToken = '\t'
+				tokenInt = '\t'
 			} else if c == 'r' {
-				intToken = '\r'
+				tokenInt = '\r'
 			} else if c == 'n' {
-				intToken = '\n'
+				tokenInt = '\n'
 			} else {
-				error("unexpected escape '\\" + charStr(c) + "'")
+				error("unexpected escape '\\" + char(c) + "'")
 			}
 			nextChar()
 		} else {
-			intToken = c
+			tokenInt = c
 			nextChar()
 		}
 		expectChar('\'')
@@ -235,7 +230,7 @@ func nextToken() {
 	// String literal
 	if c == '"' {
 		nextChar()
-		strToken = ""
+		tokenStr = ""
 		for c >= 0 && c != '"' {
 			if c == '\n' {
 				error("newline not allowed in string")
@@ -254,11 +249,10 @@ func nextToken() {
 				} else if c == 'n' {
 					c = '\n'
 				} else {
-					error("unexpected escape \"\\" + charStr(c) + "\"")
+					error("unexpected escape \"\\" + char(c) + "\"")
 				}
 			}
-			// TODO: not great to build string via concatenation
-			strToken = strToken + charStr(c)
+			tokenStr = tokenStr + char(c)
 			nextChar()
 		}
 		expectChar('"')
@@ -268,30 +262,16 @@ func nextToken() {
 
 	// Keyword or identifier
 	if isAlpha(c) || c == '_' {
-		strToken = charStr(c)
+		tokenStr = char(c)
 		nextChar()
 		for isAlpha(c) || isDigit(c) || c == '_' {
-			// TODO: not great to build string via concatenation
-			strToken = strToken + charStr(c)
+			tokenStr = tokenStr + char(c)
 			nextChar()
 		}
-		// Check for keywords
-		if strToken == "if" {
-			token = tIf
-		} else if strToken == "else" {
-			token = tElse
-		} else if strToken == "for" {
-			token = tFor
-		} else if strToken == "var" {
-			token = tVar
-		} else if strToken == "const" {
-			token = tConst
-		} else if strToken == "func" {
-			token = tFunc
-		} else if strToken == "return" {
-			token = tReturn
-		} else if strToken == "package" {
-			token = tPackage
+		index := find(tokens, tokenStr)
+		if index >= tIf && index <= tPackage {
+			// Keyword
+			token = index
 		} else {
 			// Otherwise it's an identifier
 			token = tIdent
@@ -338,10 +318,10 @@ func nextToken() {
 		return
 	}
 
-	error("unexpected '" + charStr(c) + "'")
+	error("unexpected '" + char(c) + "'")
 }
 
-func quoteStr(s string, delim string) string {
+func quote(s string, delim string) string {
 	i := 0
 	quoted := delim
 	for i < len(s) {
@@ -358,112 +338,39 @@ func quoteStr(s string, delim string) string {
 		} else if s[i] == '`' {
 			quoted = quoted + "\\`"
 		} else {
-			quoted = quoted + charStr(int(s[i]))
+			quoted = quoted + char(int(s[i]))
 		}
 		i = i + 1
 	}
 	return quoted + delim
 }
 
-func tokenStr(t int) string {
-	if t < 0 {
-		return "EOF"
-	} else if t > ' ' {
-		return charStr(t)
-	} else if t == tIf {
-		return "\"if\""
-	} else if t == tElse {
-		return "\"else\""
-	} else if t == tFor {
-		return "\"for\""
-	} else if t == tVar {
-		return "\"var\""
-	} else if t == tConst {
-		return "\"const\""
-	} else if t == tFunc {
-		return "\"func\""
-	} else if t == tReturn {
-		return "\"return\""
-	} else if t == tPackage {
-		return "\"package\""
-	} else if t == tIntLit {
-		return "integer " + intStr(intToken)
-	} else if t == tStrLit {
-		return "string " + quoteStr(strToken, "\"")
-	} else if t == tIdent {
-		return "identifier \"" + strToken + "\""
-	} else if t == tOr {
-		return "||"
-	} else if t == tAnd {
-		return "&&"
-	} else if t == tEq {
-		return "=="
-	} else if t == tNotEq {
-		return "!="
-	} else if t == tLessEq {
-		return "<="
-	} else if t == tGreaterEq {
-		return ">="
-	} else if t == tDeclAssign {
-		return ":="
-	} else {
-		return "unknown token " + intStr(t)
+func tokenName(t int) string {
+	if t > ' ' {
+		return char(t)
 	}
+	return tokens[t]
 }
 
-func typeStr(typ int) string {
-	if typ == typeVoid {
-		return "void"
-	} else if typ == typeInt {
-		return "int"
-	} else if typ == typeString {
-		return "string"
-	} else if typ == typeSliceInt {
-		return "[]int"
-	} else if typ == typeSliceString {
-		return "[]string"
-	} else {
-		return "unknown type " + intStr(typ)
-	}
+func typeName(typ int) string {
+	return types[typ]
 }
 
 func typeSize(typ int) int {
-	if typ == typeVoid {
-		return 0
-	} else if typ == typeInt {
-		return 8
-	} else if typ == typeString {
-		return 16
-	} else if typ == typeSliceInt || typ == typeSliceString {
-		return 24
-	} else {
-		error("unknown type " + intStr(typ))
-		return 0
-	}
+	return typeSizes[typ]
 }
 
 func expect(expected int, msg string) {
 	if token != expected {
-		error("expected " + msg + " not " + tokenStr(token))
+		error("expected " + msg + " not " + tokenName(token))
 	}
-	nextToken()
-}
-
-func find(names []string, name string) int {
-	i := 0
-	for i < len(names) {
-		if names[i] == name {
-			return i
-		}
-		i = i + 1
-	}
-	return -1
+	next()
 }
 
 func argsSize(funcName string) int {
 	i := find(funcs, funcName)
 	if i < 0 {
-		error("function " + quoteStr(funcName, "\"") + " not defined")
+		error("function " + quote(funcName, "\"") + " not defined")
 	}
 	sigIndex := funcSigIndexes[i]
 	numArgs := funcSigs[sigIndex+1]
@@ -504,7 +411,7 @@ func genProgramStart() {
 	print("ret\n")
 	print("\n")
 
-	print("printError:\n")
+	print("log:\n")
 	print("push rbp\n") // rbp ret addr len
 	print("mov rbp, rsp\n")
 	print("mov rax, 1\n")        // system call for "write"
@@ -516,7 +423,7 @@ func genProgramStart() {
 	print("ret\n")
 	print("\n")
 
-	print("readByte:\n")
+	print("getc:\n")
 	print("push qword 0\n")
 	print("mov rax, 0\n")   // system call for "read"
 	print("mov rdi, 0\n")   // file handle 0 is stdin
@@ -524,9 +431,9 @@ func genProgramStart() {
 	print("mov rdx, 1\n")   // length
 	print("syscall\n")
 	print("cmp rax, 1\n")
-	print("je _readByte1\n")
+	print("je _getc1\n")
 	print("mov qword [rsp], -1\n")
-	print("_readByte1:\n")
+	print("_getc1:\n")
 	print("pop rax\n")
 	print("ret\n")
 	print("\n")
@@ -589,7 +496,7 @@ func genProgramStart() {
 	print("ret\n")
 	print("\n")
 
-	print("charStr:\n")
+	print("char:\n")
 	print("push rbp\n") // rbp ret ch
 	print("mov rbp, rsp\n")
 	// Allocate 1 byte
@@ -713,32 +620,28 @@ func genProgramStart() {
 }
 
 func genConst(name string, value int) {
-	print(name + " equ " + intStr(value) + "\n")
+	print(name + " equ " + itoa(value) + "\n")
 }
 
 func genIntLit(n int) {
-	print("push qword " + intStr(n) + "\n")
+	print("push qword " + itoa(n) + "\n")
 }
 
 func genStrLit(s string) {
-	// TODO: could look up and return existing string
 	// Add string to strs and strAddrs tables
-	if len(strs) == 0 {
+	index := find(strs, s)
+	if index < 0 {
+		// Haven't seen this string constant before, add a new one
+		index = len(strs)
 		strs = append(strs, s)
-		strAddrs = append(strAddrs, 0)
-	} else {
-		lastLen := len(strs[len(strs)-1])
-		lastAddr := strAddrs[len(strAddrs)-1]
-		strs = append(strs, s)
-		strAddrs = append(strAddrs, lastAddr+lastLen)
 	}
 	// Push string struct: length and then address (by label)
-	print("push qword " + intStr(len(s)) + "\n")
-	print("push qword str" + intStr(len(strs)-1) + "\n")
+	print("push qword " + itoa(len(s)) + "\n")
+	print("push qword str" + itoa(index) + "\n")
 }
 
 func localOffset(index int) int {
-	funcIndex := find(funcs, currentFunc)
+	funcIndex := find(funcs, curFunc)
 	sigIndex := funcSigIndexes[funcIndex]
 	numArgs := funcSigs[sigIndex+1]
 	if index < numArgs {
@@ -778,7 +681,7 @@ func genFetchInstrs(typ int, addr string) {
 func genLocalFetch(index int) int {
 	offset := localOffset(index)
 	typ := localTypes[index]
-	genFetchInstrs(typ, "rbp+"+intStr(offset))
+	genFetchInstrs(typ, "rbp+"+itoa(offset))
 	return typ
 }
 
@@ -813,7 +716,7 @@ func genIdentifier(name string) int {
 		sigIndex := funcSigIndexes[funcIndex]
 		return funcSigs[sigIndex] // result type
 	}
-	error("identifier " + quoteStr(name, "\"") + " not defined")
+	error("identifier " + quote(name, "\"") + " not defined")
 	return 0
 }
 
@@ -832,7 +735,7 @@ func genAssignInstrs(typ int, addr string) {
 
 func genLocalAssign(index int) {
 	offset := localOffset(index)
-	genAssignInstrs(localTypes[index], "rbp+"+intStr(offset))
+	genAssignInstrs(localTypes[index], "rbp+"+itoa(offset))
 }
 
 func genGlobalAssign(index int) {
@@ -851,7 +754,7 @@ func genAssign(name string) {
 		genGlobalAssign(globalIndex)
 		return
 	}
-	error("identifier " + quoteStr(name, "\"") + " not defined (or not assignable)")
+	error("identifier " + quote(name, "\"") + " not defined (or not assignable)")
 }
 
 func varType(name string) int {
@@ -863,14 +766,14 @@ func varType(name string) int {
 	if globalIndex >= 0 {
 		return globalTypes[globalIndex]
 	}
-	error("identifier " + quoteStr(name, "\"") + " not defined")
+	error("identifier " + quote(name, "\"") + " not defined")
 	return 0
 }
 
 func genSliceAssign(name string) {
 	typ := varType(name)
 	print("pop rax\n") // value (addr if string type)
-	if typ == typeSliceString {
+	if typ == typeSliceStr {
 		print("pop rbx\n") // value (len)
 		print("pop rcx\n") // index * 2
 		print("add rcx, rcx\n")
@@ -880,22 +783,21 @@ func genSliceAssign(name string) {
 	localIndex := find(locals, name)
 	if localIndex >= 0 {
 		offset := localOffset(localIndex)
-		print("mov rdx, [rbp+" + intStr(offset) + "]\n")
+		print("mov rdx, [rbp+" + itoa(offset) + "]\n")
 	} else {
 		print("mov rdx, [" + name + "]\n")
 	}
-	// TODO: bounds checking!
 	print("mov [rdx+rcx*8], rax\n")
-	if typ == typeSliceString {
+	if typ == typeSliceStr {
 		print("mov [rdx+rcx*8+8], rbx\n")
 	}
 }
 
 func genCall(name string) int {
+	print("call " + name + "\n")
 	size := argsSize(name)
-	print("call " + name + "  ; argsSize=" + intStr(size) + "\n")
 	if size > 0 {
-		print("add rsp, " + intStr(size) + "\n")
+		print("add rsp, " + itoa(size) + "\n")
 	}
 	index := find(funcs, name)
 	sigIndex := funcSigIndexes[index]
@@ -905,7 +807,7 @@ func genCall(name string) int {
 	} else if resultType == typeString {
 		print("push rbx\n")
 		print("push rax\n")
-	} else if resultType == typeSliceInt || resultType == typeSliceString {
+	} else if resultType == typeSliceInt || resultType == typeSliceStr {
 		print("push rcx\n")
 		print("push rbx\n")
 		print("push rax\n")
@@ -932,7 +834,7 @@ func genDataSections() {
 	print("section .data\n")
 	i := 0
 	for i < len(strs) {
-		print("str" + intStr(i) + ": db " + quoteStr(strs[i], "`") + "\n")
+		print("str" + itoa(i) + ": db " + quote(strs[i], "`") + "\n")
 		i = i + 1
 	}
 	print("align 8\n")
@@ -957,7 +859,7 @@ func genDataSections() {
 
 func genUnary(op int, typ int) {
 	if typ != typeInt {
-		error("unary operator not allowed on type " + typeStr(typ))
+		error("unary operator not allowed on type " + typeName(typ))
 	}
 	print("pop rax\n")
 	if op == tMinus {
@@ -991,7 +893,7 @@ func genBinaryString(op int) int {
 		print("push rax\n")
 		return typeInt
 	} else {
-		error("operator " + tokenStr(op) + " not allowed on strings")
+		error("operator " + tokenName(op) + " not allowed on strings")
 		return 0
 	}
 }
@@ -1062,7 +964,7 @@ func genReturn(typ int) {
 	} else if typ == typeString {
 		print("pop rax\n")
 		print("pop rbx\n")
-	} else if typ == typeSliceInt || typ == typeSliceString {
+	} else if typ == typeSliceInt || typ == typeSliceStr {
 		print("pop rax\n")
 		print("pop rbx\n")
 		print("pop rcx\n")
@@ -1088,13 +990,12 @@ func genLabel(label string) {
 func genDiscard(typ int) {
 	size := typeSize(typ)
 	if size > 0 {
-		print("add rsp, " + intStr(typeSize(typ)) + "\n")
+		print("add rsp, " + itoa(typeSize(typ)) + "\n")
 	}
 }
 
 func genSliceExpr() {
 	// Slice expression of form slice[:max]
-	// TODO: bounds checking!
 	print("pop rax\n")  // max
 	print("pop rbx\n")  // addr
 	print("pop rcx\n")  // old length (capacity remains same)
@@ -1103,7 +1004,6 @@ func genSliceExpr() {
 }
 
 func genSliceFetch(typ int) int {
-	// TODO: bounds checking!
 	if typ == typeString {
 		print("pop rax\n") // index
 		print("pop rbx\n") // addr
@@ -1119,7 +1019,7 @@ func genSliceFetch(typ int) int {
 		print("pop rdx\n") // cap
 		print("push qword [rbx+rax*8]\n")
 		return typeInt
-	} else if typ == typeSliceString {
+	} else if typ == typeSliceStr {
 		print("pop rax\n") // index
 		print("pop rbx\n") // addr
 		print("pop rcx\n") // len
@@ -1129,21 +1029,21 @@ func genSliceFetch(typ int) int {
 		print("push qword [rbx+rax*8]\n")
 		return typeString
 	} else {
-		error("invalid slice type " + typeStr(typ))
+		error("invalid slice type " + typeName(typ))
 		return 0
 	}
 }
 
-// Parser functions
+// Recursive-descent parser
 
 func Literal() int {
 	if token == tIntLit {
-		genIntLit(intToken)
-		nextToken()
+		genIntLit(tokenInt)
+		next()
 		return typeInt
 	} else if token == tStrLit {
-		genStrLit(strToken)
-		nextToken()
+		genStrLit(tokenStr)
+		next()
 		return typeString
 	} else {
 		error("expected integer or string literal")
@@ -1159,16 +1059,11 @@ func Operand() int {
 	if token == tIntLit || token == tStrLit {
 		return Literal()
 	} else if token == tIdent {
-		name := strToken
+		name := tokenStr
 		identifier("identifier")
 		return genIdentifier(name)
-	} else if token == tLParen {
-		nextToken()
-		typ := Expression()
-		expect(tRParen, ")")
-		return typ
 	} else {
-		error("expected literal, identifier, or (expression)")
+		error("expected literal or identifier")
 		return 0
 	}
 }
@@ -1176,40 +1071,37 @@ func Operand() int {
 func ExpressionList() int {
 	firstType := Expression()
 	for token == tComma {
-		nextToken()
+		next()
 		Expression()
 	}
 	return firstType
 }
 
 func Arguments() int {
-	funcName := strToken // function name will still be in strToken
+	funcName := tokenStr // function name will still be in tokenStr
 	expect(tLParen, "(")
-	firstArgType := typeVoid
+	arg1Type := typeVoid
 	if token != tRParen {
-		firstArgType = ExpressionList()
-		if token == tComma {
-			nextToken()
-		}
+		arg1Type = ExpressionList()
 	}
 	expect(tRParen, ")")
 
-	// "Generic" built-in functions
+	// Replace "generic" built-in functions with type-specific versions
 	if funcName == "append" {
-		if firstArgType == typeSliceInt {
+		if arg1Type == typeSliceInt {
 			funcName = "_appendInt"
-		} else if firstArgType == typeSliceString {
+		} else if arg1Type == typeSliceStr {
 			funcName = "_appendString"
 		} else {
-			error("can't append to " + typeStr(firstArgType))
+			error("can't append to " + typeName(arg1Type))
 		}
 	} else if funcName == "len" {
-		if firstArgType == typeString {
+		if arg1Type == typeString {
 			funcName = "len"
-		} else if firstArgType == typeSliceInt || firstArgType == typeSliceString {
+		} else if arg1Type == typeSliceInt || arg1Type == typeSliceStr {
 			funcName = "_lenSlice"
 		} else {
-			error("can't get length of " + typeStr(firstArgType))
+			error("can't get length of " + typeName(arg1Type))
 		}
 	}
 	return genCall(funcName)
@@ -1224,15 +1116,15 @@ func indexExpr() {
 
 func PrimaryExpr() int {
 	typ := Operand()
-	if token == tLParen { // function call
+	if token == tLParen {
 		return Arguments()
 	} else if token == tLBracket {
-		nextToken()
+		next()
 		if token == tColon {
-			if typ != typeSliceInt && typ != typeSliceString {
+			if typ != typeSliceInt && typ != typeSliceStr {
 				error("slice expression requires slice type")
 			}
-			nextToken()
+			next()
 			indexExpr()
 			expect(tRBracket, "]")
 			genSliceExpr()
@@ -1248,7 +1140,7 @@ func PrimaryExpr() int {
 func UnaryExpr() int {
 	if token == tPlus || token == tMinus || token == tNot {
 		op := token
-		nextToken()
+		next()
 		typ := UnaryExpr()
 		genUnary(op, typ)
 		return typ
@@ -1260,7 +1152,7 @@ func mulExpr() int {
 	typ := UnaryExpr()
 	for token == tTimes || token == tDivide || token == tModulo {
 		op := token
-		nextToken()
+		next()
 		typRight := UnaryExpr()
 		typ = genBinary(op, typ, typRight)
 	}
@@ -1271,7 +1163,7 @@ func addExpr() int {
 	typ := mulExpr()
 	for token == tPlus || token == tMinus {
 		op := token
-		nextToken()
+		next()
 		typRight := mulExpr()
 		typ = genBinary(op, typ, typRight)
 	}
@@ -1283,7 +1175,7 @@ func comparisonExpr() int {
 	for token == tEq || token == tNotEq || token == tLess || token == tLessEq ||
 		token == tGreater || token == tGreaterEq {
 		op := token
-		nextToken()
+		next()
 		typRight := addExpr()
 		typ = genBinary(op, typ, typRight)
 	}
@@ -1294,7 +1186,7 @@ func andExpr() int {
 	typ := comparisonExpr()
 	for token == tAnd {
 		op := token
-		nextToken()
+		next()
 		typRight := comparisonExpr()
 		typ = genBinary(op, typ, typRight)
 	}
@@ -1305,7 +1197,7 @@ func orExpr() int {
 	typ := andExpr()
 	for token == tOr {
 		op := token
-		nextToken()
+		next()
 		typRight := andExpr()
 		typ = genBinary(op, typ, typRight)
 	}
@@ -1322,25 +1214,24 @@ func PackageClause() {
 }
 
 func Type() int {
-	// Only type names are supported right now
 	if token == tLBracket {
-		nextToken()
+		next()
 		expect(tRBracket, "]")
-		typeName := strToken
+		name := tokenStr
 		identifier("\"int\" or \"string\"")
-		if typeName == "int" || typeName == "bool" {
+		if name == "int" || name == "bool" {
 			return typeSliceInt
-		} else if typeName == "string" {
-			return typeSliceString
+		} else if name == "string" {
+			return typeSliceStr
 		} else {
 			error("only []int and []string are supported")
 		}
 	}
-	typeName := strToken
+	name := tokenStr
 	identifier("\"int\" or \"string\"")
-	if typeName == "int" || typeName == "bool" {
+	if name == "int" || name == "bool" {
 		return typeInt
-	} else if typeName == "string" {
+	} else if name == "string" {
 		return typeString
 	} else {
 		error("only int and string are supported")
@@ -1355,42 +1246,32 @@ func defineLocal(typ int, name string) {
 
 func VarSpec() {
 	// We only support a single identifier, not a list
-	varName := strToken
+	varName := tokenStr
 	identifier("variable identifier")
 	typ := Type()
-	if currentFunc == "" {
-		globals = append(globals, varName)
-		globalTypes = append(globalTypes, typ)
-		if token == tAssign {
-			error("assignment not supported for top-level var")
-		}
-	} else {
-		defineLocal(typ, varName)
-		if token == tAssign {
-			nextToken()
-			Expression()
-			genAssign(varName)
-		}
+	if curFunc != "" {
+		error("\"var\" not supported inside functions")
+	}
+	globals = append(globals, varName)
+	globalTypes = append(globalTypes, typ)
+	if token == tAssign {
+		error("assignment not supported for top-level var")
 	}
 }
 
 func VarDecl() {
 	expect(tVar, "\"var\"")
-	if token == tLParen {
-		nextToken()
-		for token != tEOF && token != tRParen {
-			VarSpec()
-			expect(tSemicolon, ";")
-		}
-		expect(tRParen, ")")
-	} else {
+	expect(tLParen, "(")
+	for token != tRParen {
 		VarSpec()
+		expect(tSemicolon, ";")
 	}
+	expect(tRParen, ")")
 }
 
 func ConstSpec() {
 	// We only support typed integer constants
-	name := strToken
+	name := tokenStr
 	consts = append(consts, name)
 	identifier("variable identifier")
 	typ := Type()
@@ -1398,27 +1279,23 @@ func ConstSpec() {
 		error("constants must be typed int")
 	}
 	expect(tAssign, "=")
-	value := intToken
+	value := tokenInt
 	expect(tIntLit, "integer literal")
 	genConst(name, value)
 }
 
 func ConstDecl() {
 	expect(tConst, "\"const\"")
-	if token == tLParen {
-		nextToken()
-		for token != tEOF && token != tRParen {
-			ConstSpec()
-			expect(tSemicolon, ";")
-		}
-		expect(tRParen, ")")
-	} else {
+	expect(tLParen, "(")
+	for token != tRParen {
 		ConstSpec()
+		expect(tSemicolon, ";")
 	}
+	expect(tRParen, ")")
 }
 
 func ParameterDecl() {
-	paramName := strToken
+	paramName := tokenStr
 	identifier("parameter name")
 	typ := Type()
 	defineLocal(typ, paramName)
@@ -1430,7 +1307,7 @@ func ParameterDecl() {
 func ParameterList() {
 	ParameterDecl()
 	for token == tComma {
-		nextToken()
+		next()
 		ParameterDecl()
 	}
 }
@@ -1439,9 +1316,6 @@ func Parameters() {
 	expect(tLParen, "(")
 	if token != tRParen {
 		ParameterList()
-		if token == tComma {
-			nextToken()
-		}
 	}
 	expect(tRParen, ")")
 }
@@ -1459,40 +1333,34 @@ func Signature() {
 
 func SimpleStmt() {
 	// Funky parsing here to handle assignments
-	if token == tIdent {
-		identName := strToken
-		nextToken()
-		if token == tAssign {
-			nextToken()
-			lhsType := varType(identName)
-			rhsType := Expression()
-			if lhsType != rhsType {
-				error("can't assign " + typeStr(rhsType) + " to " + typeStr(lhsType))
-			}
-			genAssign(identName)
-		} else if token == tDeclAssign {
-			nextToken()
-			typ := Expression()
-			defineLocal(typ, identName)
-			genAssign(identName)
-		} else if token == tLParen {
-			genIdentifier(identName)
-			typ := Arguments()
-			genDiscard(typ)
-		} else if token == tLBracket {
-			nextToken()
-			indexExpr()
-			expect(tRBracket, "]")
-			expect(tAssign, "=")
-			Expression()
-			genSliceAssign(identName)
-		} else {
-			genIdentifier(identName)
+	identName := tokenStr
+	expect(tIdent, "assignment or call statement")
+	if token == tAssign {
+		next()
+		lhsType := varType(identName)
+		rhsType := Expression()
+		if lhsType != rhsType {
+			error("can't assign " + typeName(rhsType) + " to " + typeName(lhsType))
 		}
-	} else {
-		exit(1) // TODO: this block isn't used -- error here
+		genAssign(identName)
+	} else if token == tDeclAssign {
+		next()
 		typ := Expression()
+		defineLocal(typ, identName)
+		genAssign(identName)
+	} else if token == tLParen {
+		genIdentifier(identName)
+		typ := Arguments()
 		genDiscard(typ)
+	} else if token == tLBracket {
+		next()
+		indexExpr()
+		expect(tRBracket, "]")
+		expect(tAssign, "=")
+		Expression()
+		genSliceAssign(identName)
+	} else {
+		error("expected assignment or call statement not " + tokenName(token))
 	}
 }
 
@@ -1508,7 +1376,7 @@ func ReturnStmt() {
 
 func newLabel() string {
 	labelNum = labelNum + 1
-	return "label" + intStr(labelNum)
+	return "label" + itoa(labelNum)
 }
 
 func IfStmt() {
@@ -1518,7 +1386,7 @@ func IfStmt() {
 	genJumpIfZero(ifLabel) // jump to else or end of if block
 	Block()
 	if token == tElse {
-		nextToken()
+		next()
 		elseLabel := newLabel()
 		genJump(elseLabel) // jump past else block
 		genLabel(ifLabel)
@@ -1545,29 +1413,20 @@ func ForStmt() {
 	genLabel(doneLabel)
 }
 
-func Declaration() {
-	// We don't support ConstDecl or TypeDecl
-	VarDecl()
-}
-
 func Statement() {
-	if token == tVar {
-		Declaration()
-	} else if token == tReturn {
-		ReturnStmt()
-	} else if token == tLBrace {
-		Block()
-	} else if token == tIf {
+	if token == tIf {
 		IfStmt()
 	} else if token == tFor {
 		ForStmt()
+	} else if token == tReturn {
+		ReturnStmt()
 	} else {
 		SimpleStmt()
 	}
 }
 
 func StatementList() {
-	for token != tEOF && token != tRBrace {
+	for token != tRBrace {
 		Statement()
 		expect(tSemicolon, ";")
 	}
@@ -1585,9 +1444,9 @@ func FunctionBody() {
 
 func FunctionDecl() {
 	expect(tFunc, "\"func\"")
-	currentFunc = strToken
-	genFuncStart(strToken)
-	funcs = append(funcs, strToken)
+	curFunc = tokenStr
+	genFuncStart(tokenStr)
+	funcs = append(funcs, tokenStr)
 	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
 	identifier("function name")
 	Signature()
@@ -1595,7 +1454,7 @@ func FunctionDecl() {
 	genFuncEnd()
 	locals = locals[:0]
 	localTypes = localTypes[:0]
-	currentFunc = ""
+	curFunc = ""
 }
 
 func TopLevelDecl() {
@@ -1623,101 +1482,104 @@ func SourceFile() {
 	expect(tEOF, "end of file")
 }
 
+func addFunc(name string, resultType int, numArgs int, arg1Type int, arg2Type int) {
+	funcs = append(funcs, name)
+	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+	funcSigs = append(funcSigs, resultType)
+	funcSigs = append(funcSigs, numArgs)
+	if numArgs > 0 {
+		funcSigs = append(funcSigs, arg1Type)
+	}
+	if numArgs > 1 {
+		funcSigs = append(funcSigs, arg2Type)
+	}
+}
+
+// Test constructs not used in compiler
+var (
+	testSlice []string
+)
+
+func testAppend(sl []string, s string) []string {
+	return append(testSlice, s)
+}
+
+func testUnused() {
+	sl := testSlice
+	sl = testAppend(sl, "one") // test returning a slice
+	sl[0] = "two"
+	if sl[0] != "two" {
+		error("fail: string slice assignment")
+	}
+	t := 0 == 0
+	f := 0 == 1
+	if !t || !!f {
+		error("fail: not operator")
+	}
+}
+
 func main() {
-	// TODO: add helper functions to simplify this
-	// Builtin: func print(s string)
-	funcs = append(funcs, "print")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeVoid)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeString)
+	// Builtin functions (Go versions in gofuncs.go)
+	addFunc("print", typeVoid, 1, typeString, 0)
+	addFunc("log", typeVoid, 1, typeString, 0)
+	addFunc("getc", typeInt, 0, 0, 0)
+	addFunc("exit", typeVoid, 1, typeInt, 0)
+	addFunc("char", typeString, 1, typeInt, 0)
+	addFunc("len", typeInt, 1, typeString, 0)
+	addFunc("_lenSlice", typeInt, 1, typeSliceInt, 0) // works with typeSliceStr too
+	addFunc("int", typeInt, 1, typeInt, 0)
+	addFunc("append", typeSliceInt, 2, typeSliceInt, typeInt)
+	addFunc("_appendInt", typeSliceInt, 2, typeSliceInt, typeInt)
+	addFunc("_appendString", typeSliceStr, 2, typeSliceStr, typeString)
 
-	// Builtin: func printError(s string)
-	funcs = append(funcs, "printError")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeVoid)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeString)
+	// Forward references
+	addFunc("Expression", typeInt, 0, 0, 0)
+	addFunc("Block", typeVoid, 0, 0, 0)
 
-	// Builtin: func readByte() int
-	funcs = append(funcs, "readByte")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeInt)
-	funcSigs = append(funcSigs, 0)
+	// Token names
+	tokens = append(tokens, "") // token 0 is not valid
+	tokens = append(tokens, "if")
+	tokens = append(tokens, "else")
+	tokens = append(tokens, "for")
+	tokens = append(tokens, "var")
+	tokens = append(tokens, "const")
+	tokens = append(tokens, "func")
+	tokens = append(tokens, "return")
+	tokens = append(tokens, "package")
+	tokens = append(tokens, "integer")
+	tokens = append(tokens, "string")
+	tokens = append(tokens, "identifier")
+	tokens = append(tokens, "EOF")
+	tokens = append(tokens, "||")
+	tokens = append(tokens, "&&")
+	tokens = append(tokens, "==")
+	tokens = append(tokens, "!=")
+	tokens = append(tokens, "<=")
+	tokens = append(tokens, ">=")
+	tokens = append(tokens, ":=")
 
-	// Builtin: func exit(code int)
-	funcs = append(funcs, "exit")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeVoid)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeInt)
+	// Type names and sizes
+	types = append(types, "")
+	typeSizes = append(typeSizes, 0)
+	types = append(types, "void")
+	typeSizes = append(typeSizes, 0)
+	types = append(types, "int")
+	typeSizes = append(typeSizes, 8)
+	types = append(types, "string")
+	typeSizes = append(typeSizes, 16)
+	types = append(types, "[]int")
+	typeSizes = append(typeSizes, 24)
+	types = append(types, "[]string")
+	typeSizes = append(typeSizes, 24)
 
-	// Builtin: func charStr(ch int) string
-	funcs = append(funcs, "charStr")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeString)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeInt)
-
-	// Builtin: func len(s stringOrSlice) int
-	funcs = append(funcs, "len")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeInt)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeString)
-
-	funcs = append(funcs, "_lenSlice")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeInt)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeSliceInt) // works with typeSliceString too
-
-	// Builtin: func int(x int) int
-	funcs = append(funcs, "int")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeInt)
-	funcSigs = append(funcSigs, 1)
-	funcSigs = append(funcSigs, typeInt)
-
-	// Builtin: func append(s slice) slice
-	funcs = append(funcs, "append")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeSliceInt) // not the real type
-	funcSigs = append(funcSigs, 2)
-	funcSigs = append(funcSigs, typeSliceInt)
-	funcSigs = append(funcSigs, typeInt)
-
-	funcs = append(funcs, "_appendInt")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeSliceInt)
-	funcSigs = append(funcSigs, 2)
-	funcSigs = append(funcSigs, typeSliceInt)
-	funcSigs = append(funcSigs, typeInt)
-
-	funcs = append(funcs, "_appendString")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeSliceString)
-	funcSigs = append(funcSigs, 2)
-	funcSigs = append(funcSigs, typeSliceString)
-	funcSigs = append(funcSigs, typeString)
-
-	// Forward reference: func Expression() int
-	funcs = append(funcs, "Expression")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeInt)
-	funcSigs = append(funcSigs, 0)
-
-	// Forward reference: func Block()
-	funcs = append(funcs, "Block")
-	funcSigIndexes = append(funcSigIndexes, len(funcSigs))
-	funcSigs = append(funcSigs, typeVoid)
-	funcSigs = append(funcSigs, 0)
+	testUnused()
 
 	genProgramStart()
 
 	line = 1
+	col = 0
 	nextChar()
-	nextToken()
+	next()
 	SourceFile()
 
 	genDataSections()

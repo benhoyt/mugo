@@ -7,7 +7,7 @@ import (
 
 var stdin = bufio.NewReader(os.Stdin)
 
-func readByte() int {
+func getc() int {
 	b, err := stdin.ReadByte()
 	if err != nil {
 		return -1
@@ -15,7 +15,7 @@ func readByte() int {
 	return int(b)
 }
 
-func printError(s string) {
+func log(s string) {
 	os.Stderr.WriteString(s)
 }
 
@@ -27,7 +27,6 @@ func exit(code int) {
 	os.Exit(code)
 }
 
-// TODO: implement in main.go later
-func charStr(ch int) string {
+func char(ch int) string {
 	return string([]byte{byte(ch)})
 }

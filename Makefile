@@ -21,3 +21,9 @@ mugo3:
 	nasm -felf64 -F stabs -o build/mugo3.o build/mugo3.asm
 	ld -o build/mugo3 build/mugo3.o
 	diff build/mugo2.asm build/mugo3.asm
+
+.PHONY: coverage
+coverage:
+	go test -c -o build/mugo_test -cover
+	build/mugo_test -test.coverprofile build/coverage.out <mugo.go >/dev/null
+	go tool cover -html build/coverage.out -o build/coverage.html
