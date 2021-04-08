@@ -2,9 +2,6 @@
 
 package main
 
-// TODO:
-// * ensure .bss is zeroed
-
 var (
 	// Lexer variables
 	c    int // current lexer byte
@@ -33,6 +30,7 @@ var (
 
 const (
 	localSpace int = 64 // max space for locals declared with := (not arguments)
+	heapSize int = 1048576 // 1MB "heap"
 
 	// Types
 	typeVoid     int = 1 // only used as return "type"
@@ -400,8 +398,12 @@ func genProgramStart() {
 	print("\n")
 
 	print("_start:\n")
-	print("mov rax, _space\n")
-	print("mov [_spacePtr], rax\n")
+	print("xor rax, rax\n") // ensure heap is zeroed
+	print("mov rdi, _heap\n")
+	print("mov rcx, " + itoa(heapSize/8) + "\n")
+	print("rep stosq\n")
+	print("mov rax, _heap\n")
+	print("mov [_heapPtr], rax\n")
 	print("call main\n")
 	print("mov rax, 60\n") // system call for "exit"
 	print("mov rdi, 0\n")  // exit code 0
@@ -522,12 +524,12 @@ func genProgramStart() {
 	print("_alloc:\n")
 	print("push rbp\n") // rbp ret size
 	print("mov rbp, rsp\n")
-	print("mov rax, [_spacePtr]\n")
+	print("mov rax, [_heapPtr]\n")
 	print("mov rbx, [rbp+16]\n")
-	print("add rbx, [_spacePtr]\n")
-	print("cmp rbx, _spaceEnd\n")
+	print("add rbx, [_heapPtr]\n")
+	print("cmp rbx, _heapEnd\n")
 	print("jg _outOfMem\n")
-	print("mov [_spacePtr], rbx\n")
+	print("mov [_heapPtr], rbx\n")
 	print("pop rbp\n")
 	print("ret 8\n")
 	print("_outOfMem:\n")
@@ -872,9 +874,9 @@ func genDataSections() {
 
 	print("\n")
 	print("section .bss\n")
-	print("_spacePtr: resq 1\n")
-	print("_space: resb 1024*1024\n") // 1MB "heap"
-	print("_spaceEnd:\n")
+	print("_heapPtr: resq 1\n")
+	print("_heap: resb " + itoa(heapSize) + "\n")
+	print("_heapEnd:\n")
 }
 
 func genUnary(op int, typ int) {
