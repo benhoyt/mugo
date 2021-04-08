@@ -4,7 +4,6 @@ package main
 
 // TODO:
 // * ensure .bss is zeroed
-// * better handling of locals than sub rsp, 160?
 
 var (
 	// Lexer variables
@@ -33,14 +32,15 @@ var (
 )
 
 const (
-	typeVoid     int = 1
+	localSpace int = 64 // max space for locals declared with := (not arguments)
+
+	// Types
+	typeVoid     int = 1 // only used as return "type"
 	typeInt      int = 2
 	typeString   int = 3
 	typeSliceInt int = 4
 	typeSliceStr int = 5
-)
 
-const (
 	// Keywords
 	tIf      int = 1
 	tElse    int = 2
@@ -366,17 +366,27 @@ func expect(expected int, msg string) {
 	next()
 }
 
-func argsSize(funcName string) int {
-	i := find(funcs, funcName)
-	if i < 0 {
-		error("function " + quote(funcName, "\"") + " not defined")
-	}
+func argsSize() int {
+	i := find(funcs, curFunc)
 	sigIndex := funcSigIndexes[i]
 	numArgs := funcSigs[sigIndex+1]
 	size := 0
 	i = 0
 	for i < numArgs {
 		size = size + typeSize(funcSigs[sigIndex+2+i])
+		i = i + 1
+	}
+	return size
+}
+
+func localsSize() int {
+	i := find(funcs, curFunc)
+	sigIndex := funcSigIndexes[i]
+	numArgs := funcSigs[sigIndex+1]
+	size := 0
+	i = numArgs
+	for i < len(locals) {
+		size = size + typeSize(localTypes[i])
 		i = i + 1
 	}
 	return size
@@ -819,13 +829,17 @@ func genFuncStart(name string) {
 	print(name + ":\n")
 	print("push rbp\n")
 	print("mov rbp, rsp\n")
-	print("sub rsp, 160\n") // TODO: enough space for 10 strings -- huge hack!
+	print("sub rsp, " + itoa(localSpace) + "\n")
 }
 
 func genFuncEnd() {
-	print("add rsp, 160\n")
+	size := localsSize()
+	if size > localSpace {
+		error(curFunc + "'s locals too big (" + itoa(size) + " > " + itoa(localSpace) + ")\n")
+	}
+	print("add rsp, " + itoa(localSpace) + "\n")
 	print("pop rbp\n")
-	size := argsSize(curFunc)
+	size = argsSize()
 	if size > 0 {
 		print("ret " + itoa(size) + "\n")
 	} else {
