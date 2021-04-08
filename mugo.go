@@ -29,8 +29,8 @@ var (
 )
 
 const (
-	localSpace int = 64 // max space for locals declared with := (not arguments)
-	heapSize int = 1048576 // 1MB "heap"
+	localSpace int = 64      // max space for locals declared with := (not arguments)
+	heapSize   int = 1048576 // 1MB "heap"
 
 	// Types
 	typeVoid     int = 1 // only used as return "type"
@@ -318,7 +318,8 @@ func next() {
 	error("unexpected '" + char(c) + "'")
 }
 
-func quote(s string, delim string) string {
+// Escape given string; use "delim" as quote character.
+func escape(s string, delim string) string {
 	i := 0
 	quoted := delim
 	for i < len(s) {
@@ -349,47 +350,6 @@ func tokenName(t int) string {
 	return tokens[t]
 }
 
-func typeName(typ int) string {
-	return types[typ]
-}
-
-func typeSize(typ int) int {
-	return typeSizes[typ]
-}
-
-func expect(expected int, msg string) {
-	if token != expected {
-		error("expected " + msg + " not " + tokenName(token))
-	}
-	next()
-}
-
-func argsSize() int {
-	i := find(funcs, curFunc)
-	sigIndex := funcSigIndexes[i]
-	numArgs := funcSigs[sigIndex+1]
-	size := 0
-	i = 0
-	for i < numArgs {
-		size = size + typeSize(funcSigs[sigIndex+2+i])
-		i = i + 1
-	}
-	return size
-}
-
-func localsSize() int {
-	i := find(funcs, curFunc)
-	sigIndex := funcSigIndexes[i]
-	numArgs := funcSigs[sigIndex+1]
-	size := 0
-	i = numArgs
-	for i < len(locals) {
-		size = size + typeSize(localTypes[i])
-		i = i + 1
-	}
-	return size
-}
-
 // Code generator functions
 
 func genProgramStart() {
@@ -397,6 +357,7 @@ func genProgramStart() {
 	print("section .text\n")
 	print("\n")
 
+	// Initialize and call main.
 	print("_start:\n")
 	print("xor rax, rax\n") // ensure heap is zeroed
 	print("mov rdi, _heap\n")
@@ -410,6 +371,7 @@ func genProgramStart() {
 	print("syscall\n")
 	print("\n")
 
+	// Write a string to stdout.
 	print("print:\n")
 	print("push rbp\n") // rbp ret addr len
 	print("mov rbp, rsp\n")
@@ -422,6 +384,7 @@ func genProgramStart() {
 	print("ret 16\n")
 	print("\n")
 
+	// Write a string to stderr.
 	print("log:\n")
 	print("push rbp\n") // rbp ret addr len
 	print("mov rbp, rsp\n")
@@ -434,6 +397,7 @@ func genProgramStart() {
 	print("ret 16\n")
 	print("\n")
 
+	// Read a single byte from stdin, or return -1 on EOF.
 	print("getc:\n")
 	print("push qword 0\n")
 	print("mov rax, 0\n")   // system call for "read"
@@ -449,17 +413,20 @@ func genProgramStart() {
 	print("ret\n")
 	print("\n")
 
+	// Like os.Exit().
 	print("exit:\n")
 	print("mov rdi, [rsp+8]\n") // code
 	print("mov rax, 60\n")      // system call for "exit"
 	print("syscall\n")
 	print("\n")
 
+	// No-op int() for use in escape(), to satisfy Go's type checker.
 	print("int:\n")
 	print("mov rax, [rsp+8]\n") // value
 	print("ret 8\n")
 	print("\n")
 
+	// Return concatenation of two strings.
 	print("_strAdd:\n")
 	print("push rbp\n") // rbp ret addr1 len1 addr0 len0
 	print("mov rbp, rsp\n")
@@ -486,6 +453,7 @@ func genProgramStart() {
 	print("ret 32\n")
 	print("\n")
 
+	// Return true if strings are equal.
 	print("_strEq:\n")
 	print("push rbp\n") // rbp ret addr1 len1 addr0 len0
 	print("mov rbp, rsp\n")
@@ -506,6 +474,7 @@ func genProgramStart() {
 	print("ret 32\n")
 	print("\n")
 
+	// Return new 1-byte string from integer character.
 	print("char:\n")
 	print("push rbp\n") // rbp ret ch
 	print("mov rbp, rsp\n")
@@ -521,6 +490,8 @@ func genProgramStart() {
 	print("ret 8\n")
 	print("\n")
 
+	// Simple bump allocator (with no GC!). Takes allocation size in bytes,
+	// returns pointer to allocated memory.
 	print("_alloc:\n")
 	print("push rbp\n") // rbp ret size
 	print("mov rbp, rsp\n")
@@ -540,6 +511,7 @@ func genProgramStart() {
 	print("call exit\n")
 	print("\n")
 
+	// Append single integer to []int, allocating and copying as necessary.
 	print("_appendInt:\n")
 	print("push rbp\n") // rbp ret value addr len cap
 	print("mov rbp, rsp\n")
@@ -576,6 +548,7 @@ func genProgramStart() {
 	print("ret 32\n")
 	print("\n")
 
+	// Append single string to []string, allocating and copying as necessary.
 	print("_appendString:\n")
 	print("push rbp\n") // rbp ret 16strAddr 24strLen 32addr 40len 48cap
 	print("mov rbp, rsp\n")
@@ -617,6 +590,7 @@ func genProgramStart() {
 	print("pop rbp\n")
 	print("ret 40\n")
 
+	// Return string length
 	print("len:\n")
 	print("push rbp\n") // rbp ret addr len
 	print("mov rbp, rsp\n")
@@ -625,6 +599,7 @@ func genProgramStart() {
 	print("ret 16\n")
 	print("\n")
 
+	// Return slice length
 	print("_lenSlice:\n")
 	print("push rbp\n") // rbp ret addr len cap
 	print("mov rbp, rsp\n")
@@ -655,6 +630,15 @@ func genStrLit(s string) {
 	print("push qword str" + itoa(index) + "\n")
 }
 
+func typeName(typ int) string {
+	return types[typ]
+}
+
+func typeSize(typ int) int {
+	return typeSizes[typ]
+}
+
+// Return offset of local variable from rbp (including arguments).
 func localOffset(index int) int {
 	funcIndex := find(funcs, curFunc)
 	sigIndex := funcSigIndexes[funcIndex]
@@ -731,7 +715,7 @@ func genIdentifier(name string) int {
 		sigIndex := funcSigIndexes[funcIndex]
 		return funcSigs[sigIndex] // result type
 	}
-	error("identifier " + quote(name, "\"") + " not defined")
+	error("identifier " + escape(name, "\"") + " not defined")
 	return 0
 }
 
@@ -769,7 +753,7 @@ func genAssign(name string) {
 		genGlobalAssign(globalIndex)
 		return
 	}
-	error("identifier " + quote(name, "\"") + " not defined (or not assignable)")
+	error("identifier " + escape(name, "\"") + " not defined (or not assignable)")
 }
 
 func varType(name string) int {
@@ -781,7 +765,7 @@ func varType(name string) int {
 	if globalIndex >= 0 {
 		return globalTypes[globalIndex]
 	}
-	error("identifier " + quote(name, "\"") + " not defined")
+	error("identifier " + escape(name, "\"") + " not defined")
 	return 0
 }
 
@@ -834,6 +818,34 @@ func genFuncStart(name string) {
 	print("sub rsp, " + itoa(localSpace) + "\n")
 }
 
+// Return size (in bytes) of current function's arguments.
+func argsSize() int {
+	i := find(funcs, curFunc)
+	sigIndex := funcSigIndexes[i]
+	numArgs := funcSigs[sigIndex+1]
+	size := 0
+	i = 0
+	for i < numArgs {
+		size = size + typeSize(funcSigs[sigIndex+2+i])
+		i = i + 1
+	}
+	return size
+}
+
+// Return size (in bytes) of current function's locals (excluding arguments).
+func localsSize() int {
+	i := find(funcs, curFunc)
+	sigIndex := funcSigIndexes[i]
+	numArgs := funcSigs[sigIndex+1]
+	size := 0
+	i = numArgs
+	for i < len(locals) {
+		size = size + typeSize(localTypes[i])
+		i = i + 1
+	}
+	return size
+}
+
 func genFuncEnd() {
 	size := localsSize()
 	if size > localSpace {
@@ -853,11 +865,15 @@ func genDataSections() {
 	print("\n")
 	print("section .data\n")
 	print("_strOutOfMem: db `out of memory\\n`\n")
+
+	// String constants
 	i := 0
 	for i < len(strs) {
-		print("str" + itoa(i) + ": db " + quote(strs[i], "`") + "\n")
+		print("str" + itoa(i) + ": db " + escape(strs[i], "`") + "\n")
 		i = i + 1
 	}
+
+	// Global variables
 	print("align 8\n")
 	i = 0
 	for i < len(globals) {
@@ -872,6 +888,7 @@ func genDataSections() {
 		i = i + 1
 	}
 
+	// "Heap" (used for strings and slice appends)
 	print("\n")
 	print("section .bss\n")
 	print("_heapPtr: resq 1\n")
@@ -1054,6 +1071,13 @@ func genSliceFetch(typ int) int {
 }
 
 // Recursive-descent parser
+
+func expect(expected int, msg string) {
+	if token != expected {
+		error("expected " + msg + " not " + tokenName(token))
+	}
+	next()
+}
 
 func Literal() int {
 	if token == tIntLit {
@@ -1514,7 +1538,16 @@ func addFunc(name string, resultType int, numArgs int, arg1Type int, arg2Type in
 	}
 }
 
-// Test constructs not used in compiler
+func addToken(name string) {
+	tokens = append(tokens, name)
+}
+
+func addType(name string, size int) {
+	types = append(types, name)
+	typeSizes = append(typeSizes, size)
+}
+
+// Test constructs not used in compiler itself.
 var (
 	testSlice []string
 )
@@ -1538,7 +1571,7 @@ func testUnused() {
 }
 
 func main() {
-	// Builtin functions (Go versions in gofuncs.go)
+	// Builtin functions (defined in genProgramStart; Go versions in gofuncs.go)
 	addFunc("print", typeVoid, 1, typeString, 0)
 	addFunc("log", typeVoid, 1, typeString, 0)
 	addFunc("getc", typeInt, 0, 0, 0)
@@ -1556,40 +1589,34 @@ func main() {
 	addFunc("Block", typeVoid, 0, 0, 0)
 
 	// Token names
-	tokens = append(tokens, "") // token 0 is not valid
-	tokens = append(tokens, "if")
-	tokens = append(tokens, "else")
-	tokens = append(tokens, "for")
-	tokens = append(tokens, "var")
-	tokens = append(tokens, "const")
-	tokens = append(tokens, "func")
-	tokens = append(tokens, "return")
-	tokens = append(tokens, "package")
-	tokens = append(tokens, "integer")
-	tokens = append(tokens, "string")
-	tokens = append(tokens, "identifier")
-	tokens = append(tokens, "EOF")
-	tokens = append(tokens, "||")
-	tokens = append(tokens, "&&")
-	tokens = append(tokens, "==")
-	tokens = append(tokens, "!=")
-	tokens = append(tokens, "<=")
-	tokens = append(tokens, ">=")
-	tokens = append(tokens, ":=")
+	addToken("") // token 0 is not valid
+	addToken("if")
+	addToken("else")
+	addToken("for")
+	addToken("var")
+	addToken("const")
+	addToken("func")
+	addToken("return")
+	addToken("package")
+	addToken("integer")
+	addToken("string")
+	addToken("identifier")
+	addToken("EOF")
+	addToken("||")
+	addToken("&&")
+	addToken("==")
+	addToken("!=")
+	addToken("<=")
+	addToken(">=")
+	addToken(":=")
 
 	// Type names and sizes
-	types = append(types, "")
-	typeSizes = append(typeSizes, 0)
-	types = append(types, "void")
-	typeSizes = append(typeSizes, 0)
-	types = append(types, "int")
-	typeSizes = append(typeSizes, 8)
-	types = append(types, "string")
-	typeSizes = append(typeSizes, 16)
-	types = append(types, "[]int")
-	typeSizes = append(typeSizes, 24)
-	types = append(types, "[]string")
-	typeSizes = append(typeSizes, 24)
+	addType("", 0) // type 0 is not valid
+	addType("void", 0)
+	addType("int", 8)
+	addType("string", 16)
+	addType("[]int", 24)
+	addType("[]string", 24)
 
 	testUnused()
 
