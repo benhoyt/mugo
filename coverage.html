@@ -1,0 +1,1773 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>mugo: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/benhoyt/mugo/gofuncs.go (75.0%)</option>
+				
+				<option value="file1">github.com/benhoyt/mugo/mugo.go (95.3%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package main
+
+import (
+        "bufio"
+        "os"
+)
+
+var stdin = bufio.NewReader(os.Stdin)
+
+func getc() int <span class="cov8" title="1">{
+        b, err := stdin.ReadByte()
+        if err != nil </span><span class="cov8" title="1">{
+                return -1
+        }</span>
+        <span class="cov8" title="1">return int(b)</span>
+}
+
+func log(s string) <span class="cov0" title="0">{
+        os.Stderr.WriteString(s)
+}</span>
+
+func print(s string) <span class="cov8" title="1">{
+        os.Stdout.WriteString(s)
+}</span>
+
+func exit(code int) <span class="cov0" title="0">{
+        os.Exit(code)
+}</span>
+
+func char(ch int) string <span class="cov8" title="1">{
+        return string([]byte{byte(ch)})
+}</span>
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">// Mugo: compiler for a (micro) subset of Go
+
+package main
+
+var (
+        // Lexer variables
+        c    int // current lexer byte
+        line int // current line and column
+        col  int
+
+        // Parser-compiler variables
+        token          int      // current parser token
+        tokenInt       int      // integer value of current token (if applicable)
+        tokenStr       string   // string value of current token (if applicable)
+        curFunc        string   // current function name, or "" if not in a func
+        tokens         []string // token names
+        types          []string // type names
+        typeSizes      []int    // type sizes in bytes
+        labelNum       int      // current label number
+        consts         []string // constant names
+        globals        []string // global names and types
+        globalTypes    []int
+        locals         []string // local names and types
+        localTypes     []int
+        funcs          []string // function names
+        funcSigIndexes []int    // indexes into funcSigs
+        funcSigs       []int    // for each func: retType N arg1Type ... argNType
+        strs           []string // string constants
+)
+
+const (
+        localSpace int = 64      // max space for locals declared with := (not arguments)
+        heapSize   int = 1048576 // 1MB "heap"
+
+        // Types
+        typeVoid     int = 1 // only used as return "type"
+        typeInt      int = 2
+        typeString   int = 3
+        typeSliceInt int = 4
+        typeSliceStr int = 5
+
+        // Keywords
+        tIf      int = 1
+        tElse    int = 2
+        tFor     int = 3
+        tVar     int = 4
+        tConst   int = 5
+        tFunc    int = 6
+        tReturn  int = 7
+        tPackage int = 8
+
+        // Literals, identifiers, and EOF
+        tIntLit int = 9
+        tStrLit int = 10
+        tIdent  int = 11
+        tEOF    int = 12
+
+        // Two-character tokens
+        tOr         int = 13
+        tAnd        int = 14
+        tEq         int = 15
+        tNotEq      int = 16
+        tLessEq     int = 17
+        tGreaterEq  int = 18
+        tDeclAssign int = 19
+
+        // Single-character tokens (these use the ASCII value)
+        tPlus      int = '+'
+        tMinus     int = '-'
+        tTimes     int = '*'
+        tDivide    int = '/'
+        tModulo    int = '%'
+        tComma     int = ','
+        tSemicolon int = ';'
+        tColon     int = ':'
+        tAssign    int = '='
+        tNot       int = '!'
+        tLess      int = '&lt;'
+        tGreater   int = '&gt;'
+        tLParen    int = '('
+        tRParen    int = ')'
+        tLBrace    int = '{'
+        tRBrace    int = '}'
+        tLBracket  int = '['
+        tRBracket  int = ']'
+)
+
+// Lexer
+
+func nextChar() <span class="cov8" title="1">{
+        if c == '\n' </span><span class="cov8" title="1">{
+                line = line + 1
+                col = 0
+        }</span>
+        <span class="cov8" title="1">c = getc()
+        col = col + 1</span>
+}
+
+func itoa(n int) string <span class="cov8" title="1">{
+        if n &lt; 0 </span><span class="cov8" title="1">{
+                return "-" + itoa(-n)
+        }</span>
+        <span class="cov8" title="1">if n &lt; 10 </span><span class="cov8" title="1">{
+                return char(n + '0')
+        }</span>
+        <span class="cov8" title="1">return itoa(n/10) + itoa(n%10)</span>
+}
+
+func error(msg string) <span class="cov0" title="0">{
+        log("\n" + itoa(line) + ":" + itoa(col) + ": " + msg + "\n")
+        exit(1)
+}</span>
+
+func isDigit(ch int) bool <span class="cov8" title="1">{
+        return ch &gt;= '0' &amp;&amp; ch &lt;= '9'
+}</span>
+
+func isAlpha(ch int) bool <span class="cov8" title="1">{
+        return ch &gt;= 'a' &amp;&amp; ch &lt;= 'z' || ch &gt;= 'A' &amp;&amp; ch &lt;= 'Z'
+}</span>
+
+func find(names []string, name string) int <span class="cov8" title="1">{
+        i := 0
+        for i &lt; len(names) </span><span class="cov8" title="1">{
+                if names[i] == name </span><span class="cov8" title="1">{
+                        return i
+                }</span>
+                <span class="cov8" title="1">i = i + 1</span>
+        }
+        <span class="cov8" title="1">return -1</span>
+}
+
+func expectChar(ch int) <span class="cov8" title="1">{
+        if c != ch </span><span class="cov0" title="0">{
+                error("expected '" + char(ch) + "' not '" + char(c) + "'")
+        }</span>
+        <span class="cov8" title="1">nextChar()</span>
+}
+
+func tokenChoice(oneCharToken int, secondCh int, twoCharToken int) <span class="cov8" title="1">{
+        nextChar()
+        if c == secondCh </span><span class="cov8" title="1">{
+                nextChar()
+                token = twoCharToken
+        }</span> else<span class="cov8" title="1"> {
+                token = oneCharToken
+        }</span>
+}
+
+func next() <span class="cov8" title="1">{
+        // Skip whitespace and comments, and look for / operator
+        for c == '/' || c == ' ' || c == '\t' || c == '\r' || c == '\n' </span><span class="cov8" title="1">{
+                if c == '/' </span><span class="cov8" title="1">{
+                        nextChar()
+                        if c != '/' </span><span class="cov8" title="1">{
+                                token = tDivide
+                                return
+                        }</span>
+                        <span class="cov8" title="1">nextChar()
+                        // Comment, skip till end of line
+                        for c &gt;= 0 &amp;&amp; c != '\n' </span><span class="cov8" title="1">{
+                                nextChar()
+                        }</span>
+                } else<span class="cov8" title="1"> if c == '\n' </span><span class="cov8" title="1">{
+                        nextChar()
+                        // Semicolon insertion: golang.org/ref/spec#Semicolons
+                        if token == tIdent || token == tIntLit || token == tStrLit ||
+                                token == tReturn || token == tRParen ||
+                                token == tRBracket || token == tRBrace </span><span class="cov8" title="1">{
+                                token = tSemicolon
+                                return
+                        }</span>
+                } else<span class="cov8" title="1"> {
+                        nextChar()
+                }</span>
+        }
+        <span class="cov8" title="1">if c &lt; 0 </span><span class="cov8" title="1">{
+                // End of file
+                token = tEOF
+                return
+        }</span>
+
+        // Integer literal
+        <span class="cov8" title="1">if isDigit(c) </span><span class="cov8" title="1">{
+                tokenInt = c - '0'
+                nextChar()
+                for isDigit(c) </span><span class="cov8" title="1">{
+                        tokenInt = tokenInt*10 + c - '0'
+                        nextChar()
+                }</span>
+                <span class="cov8" title="1">token = tIntLit
+                return</span>
+        }
+
+        // Character literal
+        <span class="cov8" title="1">if c == '\'' </span><span class="cov8" title="1">{
+                nextChar()
+                if c == '\n' </span><span class="cov0" title="0">{
+                        error("newline not allowed in character literal")
+                }</span>
+                <span class="cov8" title="1">if c == '\\' </span><span class="cov8" title="1">{
+                        // Escape character
+                        nextChar()
+                        if c == '\'' </span><span class="cov8" title="1">{
+                                tokenInt = '\''
+                        }</span> else<span class="cov8" title="1"> if c == '\\' </span><span class="cov8" title="1">{
+                                tokenInt = '\\'
+                        }</span> else<span class="cov8" title="1"> if c == 't' </span><span class="cov8" title="1">{
+                                tokenInt = '\t'
+                        }</span> else<span class="cov8" title="1"> if c == 'r' </span><span class="cov8" title="1">{
+                                tokenInt = '\r'
+                        }</span> else<span class="cov8" title="1"> if c == 'n' </span><span class="cov8" title="1">{
+                                tokenInt = '\n'
+                        }</span> else<span class="cov0" title="0"> {
+                                error("unexpected escape '\\" + char(c) + "'")
+                        }</span>
+                        <span class="cov8" title="1">nextChar()</span>
+                } else<span class="cov8" title="1"> {
+                        tokenInt = c
+                        nextChar()
+                }</span>
+                <span class="cov8" title="1">expectChar('\'')
+                token = tIntLit
+                return</span>
+        }
+
+        // String literal
+        <span class="cov8" title="1">if c == '"' </span><span class="cov8" title="1">{
+                nextChar()
+                tokenStr = ""
+                for c &gt;= 0 &amp;&amp; c != '"' </span><span class="cov8" title="1">{
+                        if c == '\n' </span><span class="cov0" title="0">{
+                                error("newline not allowed in string")
+                        }</span>
+                        <span class="cov8" title="1">if c == '\\' </span><span class="cov8" title="1">{
+                                // Escape character
+                                nextChar()
+                                if c == '"' </span><span class="cov8" title="1">{
+                                        c = '"'
+                                }</span> else<span class="cov8" title="1"> if c == '\\' </span><span class="cov8" title="1">{
+                                        c = '\\'
+                                }</span> else<span class="cov8" title="1"> if c == 't' </span><span class="cov0" title="0">{
+                                        c = '\t'
+                                }</span> else<span class="cov8" title="1"> if c == 'r' </span><span class="cov0" title="0">{
+                                        c = '\r'
+                                }</span> else<span class="cov8" title="1"> if c == 'n' </span><span class="cov8" title="1">{
+                                        c = '\n'
+                                }</span> else<span class="cov0" title="0"> {
+                                        error("unexpected escape \"\\" + char(c) + "\"")
+                                }</span>
+                        }
+                        <span class="cov8" title="1">tokenStr = tokenStr + char(c)
+                        nextChar()</span>
+                }
+                <span class="cov8" title="1">expectChar('"')
+                token = tStrLit
+                return</span>
+        }
+
+        // Keyword or identifier
+        <span class="cov8" title="1">if isAlpha(c) || c == '_' </span><span class="cov8" title="1">{
+                tokenStr = char(c)
+                nextChar()
+                for isAlpha(c) || isDigit(c) || c == '_' </span><span class="cov8" title="1">{
+                        tokenStr = tokenStr + char(c)
+                        nextChar()
+                }</span>
+                <span class="cov8" title="1">index := find(tokens, tokenStr)
+                if index &gt;= tIf &amp;&amp; index &lt;= tPackage </span><span class="cov8" title="1">{
+                        // Keyword
+                        token = index
+                }</span> else<span class="cov8" title="1"> {
+                        // Otherwise it's an identifier
+                        token = tIdent
+                }</span>
+                <span class="cov8" title="1">return</span>
+        }
+
+        // Single-character tokens (token is ASCII value)
+        <span class="cov8" title="1">if c == '+' || c == '-' || c == '*' || c == '%' || c == ';' ||
+                c == ',' || c == '(' || c == ')' || c == '{' || c == '}' ||
+                c == '[' || c == ']' </span><span class="cov8" title="1">{
+                token = c
+                nextChar()
+                return
+        }</span>
+
+        // One or two-character tokens
+        <span class="cov8" title="1">if c == '=' </span><span class="cov8" title="1">{
+                tokenChoice(tAssign, '=', tEq)
+                return
+        }</span> else<span class="cov8" title="1"> if c == '&lt;' </span><span class="cov8" title="1">{
+                tokenChoice(tLess, '=', tLessEq)
+                return
+        }</span> else<span class="cov8" title="1"> if c == '&gt;' </span><span class="cov8" title="1">{
+                tokenChoice(tGreater, '=', tGreaterEq)
+                return
+        }</span> else<span class="cov8" title="1"> if c == '!' </span><span class="cov8" title="1">{
+                tokenChoice(tNot, '=', tNotEq)
+                return
+        }</span> else<span class="cov8" title="1"> if c == ':' </span><span class="cov8" title="1">{
+                tokenChoice(tColon, '=', tDeclAssign)
+                return
+        }</span>
+
+        // Two-character tokens
+        <span class="cov8" title="1">if c == '|' </span><span class="cov8" title="1">{
+                nextChar()
+                expectChar('|')
+                token = tOr
+                return
+        }</span> else<span class="cov8" title="1"> if c == '&amp;' </span><span class="cov8" title="1">{
+                nextChar()
+                expectChar('&amp;')
+                token = tAnd
+                return
+        }</span>
+
+        <span class="cov0" title="0">error("unexpected '" + char(c) + "'")</span>
+}
+
+// Escape given string; use "delim" as quote character.
+func escape(s string, delim string) string <span class="cov8" title="1">{
+        i := 0
+        quoted := delim
+        for i &lt; len(s) </span><span class="cov8" title="1">{
+                if s[i] == '"' </span><span class="cov8" title="1">{
+                        quoted = quoted + "\\\""
+                }</span> else<span class="cov8" title="1"> if s[i] == '\\' </span><span class="cov8" title="1">{
+                        quoted = quoted + "\\\\"
+                }</span> else<span class="cov8" title="1"> if s[i] == '\t' </span><span class="cov0" title="0">{
+                        quoted = quoted + "\\t"
+                }</span> else<span class="cov8" title="1"> if s[i] == '\r' </span><span class="cov0" title="0">{
+                        quoted = quoted + "\\r"
+                }</span> else<span class="cov8" title="1"> if s[i] == '\n' </span><span class="cov8" title="1">{
+                        quoted = quoted + "\\n"
+                }</span> else<span class="cov8" title="1"> if s[i] == '`' </span><span class="cov8" title="1">{
+                        quoted = quoted + "\\`"
+                }</span> else<span class="cov8" title="1"> {
+                        quoted = quoted + char(int(s[i]))
+                }</span>
+                <span class="cov8" title="1">i = i + 1</span>
+        }
+        <span class="cov8" title="1">return quoted + delim</span>
+}
+
+func tokenName(t int) string <span class="cov0" title="0">{
+        if t &gt; ' ' </span><span class="cov0" title="0">{
+                return char(t)
+        }</span>
+        <span class="cov0" title="0">return tokens[t]</span>
+}
+
+// Code generator functions
+
+func genProgramStart() <span class="cov8" title="1">{
+        print("global _start\n")
+        print("section .text\n")
+        print("\n")
+
+        // Initialize and call main.
+        print("_start:\n")
+        print("xor rax, rax\n") // ensure heap is zeroed
+        print("mov rdi, _heap\n")
+        print("mov rcx, " + itoa(heapSize/8) + "\n")
+        print("rep stosq\n")
+        print("mov rax, _heap\n")
+        print("mov [_heapPtr], rax\n")
+        print("call main\n")
+        print("mov rax, 60\n") // system call for "exit"
+        print("mov rdi, 0\n")  // exit code 0
+        print("syscall\n")
+        print("\n")
+
+        // Write a string to stdout.
+        print("print:\n")
+        print("push rbp\n") // rbp ret addr len
+        print("mov rbp, rsp\n")
+        print("mov rax, 1\n")        // system call for "write"
+        print("mov rdi, 1\n")        // file handle 1 is stdout
+        print("mov rsi, [rbp+16]\n") // address
+        print("mov rdx, [rbp+24]\n") // length
+        print("syscall\n")
+        print("pop rbp\n")
+        print("ret 16\n")
+        print("\n")
+
+        // Write a string to stderr.
+        print("log:\n")
+        print("push rbp\n") // rbp ret addr len
+        print("mov rbp, rsp\n")
+        print("mov rax, 1\n")        // system call for "write"
+        print("mov rdi, 2\n")        // file handle 2 is stderr
+        print("mov rsi, [rbp+16]\n") // address
+        print("mov rdx, [rbp+24]\n") // length
+        print("syscall\n")
+        print("pop rbp\n")
+        print("ret 16\n")
+        print("\n")
+
+        // Read a single byte from stdin, or return -1 on EOF.
+        print("getc:\n")
+        print("push qword 0\n")
+        print("mov rax, 0\n")   // system call for "read"
+        print("mov rdi, 0\n")   // file handle 0 is stdin
+        print("mov rsi, rsp\n") // address
+        print("mov rdx, 1\n")   // length
+        print("syscall\n")
+        print("cmp rax, 1\n")
+        print("je _getc1\n")
+        print("mov qword [rsp], -1\n")
+        print("_getc1:\n")
+        print("pop rax\n")
+        print("ret\n")
+        print("\n")
+
+        // Like os.Exit().
+        print("exit:\n")
+        print("mov rdi, [rsp+8]\n") // code
+        print("mov rax, 60\n")      // system call for "exit"
+        print("syscall\n")
+        print("\n")
+
+        // No-op int() for use in escape(), to satisfy Go's type checker.
+        print("int:\n")
+        print("mov rax, [rsp+8]\n") // value
+        print("ret 8\n")
+        print("\n")
+
+        // Return concatenation of two strings.
+        print("_strAdd:\n")
+        print("push rbp\n") // rbp ret addr1 len1 addr0 len0
+        print("mov rbp, rsp\n")
+        // Allocate len0+len1 bytes
+        print("mov rax, [rbp+24]\n") // len1
+        print("add rax, [rbp+40]\n") // len1 + len0
+        print("push rax\n")
+        print("call _alloc\n")
+        // Move len0 bytes from addr0 to addrNew
+        print("mov rsi, [rbp+32]\n")
+        print("mov rdi, rax\n")
+        print("mov rcx, [rbp+40]\n")
+        print("rep movsb\n")
+        // Move len1 bytes from addr1 to addrNew+len0
+        print("mov rsi, [rbp+16]\n")
+        print("mov rdi, rax\n")
+        print("add rdi, [rbp+40]\n")
+        print("mov rcx, [rbp+24]\n")
+        print("rep movsb\n")
+        // Return addrNew len0+len1 (addrNew already in rax)
+        print("mov rbx, [rbp+24]\n")
+        print("add rbx, [rbp+40]\n")
+        print("pop rbp\n")
+        print("ret 32\n")
+        print("\n")
+
+        // Return true if strings are equal.
+        print("_strEq:\n")
+        print("push rbp\n") // rbp ret addr1 len1 addr0 len0
+        print("mov rbp, rsp\n")
+        print("mov rcx, [rbp+40]\n")
+        print("cmp rcx, [rbp+24]\n")
+        print("jne _strEqNotEqual\n")
+        print("mov rsi, [rbp+16]\n")
+        print("mov rdi, [rbp+32]\n")
+        print("rep cmpsb\n")
+        print("jne _strEqNotEqual\n")
+        print("mov rax, 1\n")
+        print("pop rbp\n")
+        print("ret 32\n")
+        // Return addrNew len0+len1 (addrNew already in rax)
+        print("_strEqNotEqual:\n")
+        print("xor rax, rax\n")
+        print("pop rbp\n")
+        print("ret 32\n")
+        print("\n")
+
+        // Return new 1-byte string from integer character.
+        print("char:\n")
+        print("push rbp\n") // rbp ret ch
+        print("mov rbp, rsp\n")
+        // Allocate 1 byte
+        print("push 1\n")
+        print("call _alloc\n")
+        // Move byte to destination
+        print("mov rbx, [rbp+16]\n")
+        print("mov [rax], bl\n")
+        // Return addrNew 1 (addrNew already in rax)
+        print("mov rbx, 1\n")
+        print("pop rbp\n")
+        print("ret 8\n")
+        print("\n")
+
+        // Simple bump allocator (with no GC!). Takes allocation size in bytes,
+        // returns pointer to allocated memory.
+        print("_alloc:\n")
+        print("push rbp\n") // rbp ret size
+        print("mov rbp, rsp\n")
+        print("mov rax, [_heapPtr]\n")
+        print("mov rbx, [rbp+16]\n")
+        print("add rbx, [_heapPtr]\n")
+        print("cmp rbx, _heapEnd\n")
+        print("jg _outOfMem\n")
+        print("mov [_heapPtr], rbx\n")
+        print("pop rbp\n")
+        print("ret 8\n")
+        print("_outOfMem:\n")
+        print("push qword 14\n") // len("out of memory\n")
+        print("push _strOutOfMem\n")
+        print("call log\n")
+        print("push qword 1\n")
+        print("call exit\n")
+        print("\n")
+
+        // Append single integer to []int, allocating and copying as necessary.
+        print("_appendInt:\n")
+        print("push rbp\n") // rbp ret value addr len cap
+        print("mov rbp, rsp\n")
+        // Ensure capacity is large enough
+        print("mov rax, [rbp+32]\n") // len
+        print("mov rbx, [rbp+40]\n") // cap
+        print("cmp rax, rbx\n")      // if len &gt;= cap, resize
+        print("jl _appendInt1\n")
+        print("add rbx, rbx\n")    // double in size
+        print("jnz _appendInt2\n") // if it's zero, allocate minimum size
+        print("inc rbx\n")
+        print("_appendInt2:\n")
+        print("mov [rbp+40], rbx\n") // update cap
+        // Allocate newCap*8 bytes
+        print("lea rbx, [rbx*8]\n")
+        print("push rbx\n")
+        print("call _alloc\n")
+        // Move from old array to new
+        print("mov rsi, [rbp+24]\n")
+        print("mov rdi, rax\n")
+        print("mov [rbp+24], rax\n") // update addr
+        print("mov rcx, [rbp+32]\n")
+        print("rep movsq\n")
+        // Set addr[len] = value
+        print("_appendInt1:\n")
+        print("mov rax, [rbp+24]\n") // addr
+        print("mov rbx, [rbp+32]\n") // len
+        print("mov rdx, [rbp+16]\n") // value
+        print("mov [rax+rbx*8], rdx\n")
+        // Return addr len+1 cap (in rax rbx rcx)
+        print("inc rbx\n")
+        print("mov rcx, [rbp+40]\n")
+        print("pop rbp\n")
+        print("ret 32\n")
+        print("\n")
+
+        // Append single string to []string, allocating and copying as necessary.
+        print("_appendString:\n")
+        print("push rbp\n") // rbp ret 16strAddr 24strLen 32addr 40len 48cap
+        print("mov rbp, rsp\n")
+        // Ensure capacity is large enough
+        print("mov rax, [rbp+40]\n") // len
+        print("mov rbx, [rbp+48]\n") // cap
+        print("cmp rax, rbx\n")      // if len &gt;= cap, resize
+        print("jl _appendInt3\n")
+        print("add rbx, rbx\n")    // double in size
+        print("jnz _appendInt4\n") // if it's zero, allocate minimum size
+        print("inc rbx\n")
+        print("_appendInt4:\n")
+        print("mov [rbp+48], rbx\n") // update cap
+        // Allocate newCap*16 bytes
+        print("add rbx, rbx\n")
+        print("lea rbx, [rbx*8]\n")
+        print("push rbx\n")
+        print("call _alloc\n")
+        // Move from old array to new
+        print("mov rsi, [rbp+32]\n")
+        print("mov rdi, rax\n")
+        print("mov [rbp+32], rax\n") // update addr
+        print("mov rcx, [rbp+40]\n")
+        print("add rcx, rcx\n")
+        print("rep movsq\n")
+        // Set addr[len] = strValue
+        print("_appendInt3:\n")
+        print("mov rax, [rbp+32]\n") // addr
+        print("mov rbx, [rbp+40]\n") // len
+        print("add rbx, rbx\n")
+        print("mov rdx, [rbp+16]\n") // strAddr
+        print("mov [rax+rbx*8], rdx\n")
+        print("mov rdx, [rbp+24]\n") // strLen
+        print("mov [rax+rbx*8+8], rdx\n")
+        // Return addr len+1 cap (in rax rbx rcx)
+        print("mov rbx, [rbp+40]\n")
+        print("inc rbx\n")
+        print("mov rcx, [rbp+48]\n")
+        print("pop rbp\n")
+        print("ret 40\n")
+
+        // Return string length
+        print("len:\n")
+        print("push rbp\n") // rbp ret addr len
+        print("mov rbp, rsp\n")
+        print("mov rax, [rbp+24]\n")
+        print("pop rbp\n")
+        print("ret 16\n")
+        print("\n")
+
+        // Return slice length
+        print("_lenSlice:\n")
+        print("push rbp\n") // rbp ret addr len cap
+        print("mov rbp, rsp\n")
+        print("mov rax, [rbp+24]\n")
+        print("pop rbp\n")
+        print("ret 24\n")
+        print("\n")
+}</span>
+
+func genConst(name string, value int) <span class="cov8" title="1">{
+        print(name + " equ " + itoa(value) + "\n")
+}</span>
+
+func genIntLit(n int) <span class="cov8" title="1">{
+        print("push qword " + itoa(n) + "\n")
+}</span>
+
+func genStrLit(s string) <span class="cov8" title="1">{
+        // Add string to strs and strAddrs tables
+        index := find(strs, s)
+        if index &lt; 0 </span><span class="cov8" title="1">{
+                // Haven't seen this string constant before, add a new one
+                index = len(strs)
+                strs = append(strs, s)
+        }</span>
+        // Push string struct: length and then address (by label)
+        <span class="cov8" title="1">print("push qword " + itoa(len(s)) + "\n")
+        print("push qword str" + itoa(index) + "\n")</span>
+}
+
+func typeName(typ int) string <span class="cov0" title="0">{
+        return types[typ]
+}</span>
+
+func typeSize(typ int) int <span class="cov8" title="1">{
+        return typeSizes[typ]
+}</span>
+
+// Return offset of local variable from rbp (including arguments).
+func localOffset(index int) int <span class="cov8" title="1">{
+        funcIndex := find(funcs, curFunc)
+        sigIndex := funcSigIndexes[funcIndex]
+        numArgs := funcSigs[sigIndex+1]
+        if index &lt; numArgs </span><span class="cov8" title="1">{
+                // Function argument local (add to rbp; args are on stack in reverse)
+                offset := 16
+                i := numArgs - 1
+                for i &gt; index </span><span class="cov8" title="1">{
+                        offset = offset + typeSize(localTypes[i])
+                        i = i - 1
+                }</span>
+                <span class="cov8" title="1">return offset</span>
+        } else<span class="cov8" title="1"> {
+                // Declared local (subtract from rbp)
+                offset := 0
+                i := numArgs
+                for i &lt;= index </span><span class="cov8" title="1">{
+                        offset = offset - typeSize(localTypes[i])
+                        i = i + 1
+                }</span>
+                <span class="cov8" title="1">return offset</span>
+        }
+}
+
+func genFetchInstrs(typ int, addr string) <span class="cov8" title="1">{
+        if typ == typeInt </span><span class="cov8" title="1">{
+                print("push qword [" + addr + "]\n")
+        }</span> else<span class="cov8" title="1"> if typ == typeString </span><span class="cov8" title="1">{
+                print("push qword [" + addr + "+8]\n")
+                print("push qword [" + addr + "]\n")
+        }</span> else<span class="cov8" title="1"> { // slice
+                print("push qword [" + addr + "+16]\n")
+                print("push qword [" + addr + "+8]\n")
+                print("push qword [" + addr + "]\n")
+        }</span>
+}
+
+func genLocalFetch(index int) int <span class="cov8" title="1">{
+        offset := localOffset(index)
+        typ := localTypes[index]
+        genFetchInstrs(typ, "rbp+"+itoa(offset))
+        return typ
+}</span>
+
+func genGlobalFetch(index int) int <span class="cov8" title="1">{
+        name := globals[index]
+        typ := globalTypes[index]
+        genFetchInstrs(typ, name)
+        return typ
+}</span>
+
+func genConstFetch(index int) int <span class="cov8" title="1">{
+        name := consts[index]
+        print("push qword " + name + "\n")
+        return typeInt
+}</span>
+
+func genIdentifier(name string) int <span class="cov8" title="1">{
+        localIndex := find(locals, name)
+        if localIndex &gt;= 0 </span><span class="cov8" title="1">{
+                return genLocalFetch(localIndex)
+        }</span>
+        <span class="cov8" title="1">globalIndex := find(globals, name)
+        if globalIndex &gt;= 0 </span><span class="cov8" title="1">{
+                return genGlobalFetch(globalIndex)
+        }</span>
+        <span class="cov8" title="1">constIndex := find(consts, name)
+        if constIndex &gt;= 0 </span><span class="cov8" title="1">{
+                return genConstFetch(constIndex)
+        }</span>
+        <span class="cov8" title="1">funcIndex := find(funcs, name)
+        if funcIndex &gt;= 0 </span><span class="cov8" title="1">{
+                sigIndex := funcSigIndexes[funcIndex]
+                return funcSigs[sigIndex] // result type
+        }</span>
+        <span class="cov0" title="0">error("identifier " + escape(name, "\"") + " not defined")
+        return 0</span>
+}
+
+func genAssignInstrs(typ int, addr string) <span class="cov8" title="1">{
+        if typ == typeInt </span><span class="cov8" title="1">{
+                print("pop qword [" + addr + "]\n")
+        }</span> else<span class="cov8" title="1"> if typ == typeString </span><span class="cov8" title="1">{
+                print("pop qword [" + addr + "]\n")
+                print("pop qword [" + addr + "+8]\n")
+        }</span> else<span class="cov8" title="1"> { // slice
+                print("pop qword [" + addr + "]\n")
+                print("pop qword [" + addr + "+8]\n")
+                print("pop qword [" + addr + "+16]\n")
+        }</span>
+}
+
+func genLocalAssign(index int) <span class="cov8" title="1">{
+        offset := localOffset(index)
+        genAssignInstrs(localTypes[index], "rbp+"+itoa(offset))
+}</span>
+
+func genGlobalAssign(index int) <span class="cov8" title="1">{
+        name := globals[index]
+        genAssignInstrs(globalTypes[index], name)
+}</span>
+
+func genAssign(name string) <span class="cov8" title="1">{
+        localIndex := find(locals, name)
+        if localIndex &gt;= 0 </span><span class="cov8" title="1">{
+                genLocalAssign(localIndex)
+                return
+        }</span>
+        <span class="cov8" title="1">globalIndex := find(globals, name)
+        if globalIndex &gt;= 0 </span><span class="cov8" title="1">{
+                genGlobalAssign(globalIndex)
+                return
+        }</span>
+        <span class="cov0" title="0">error("identifier " + escape(name, "\"") + " not defined (or not assignable)")</span>
+}
+
+func varType(name string) int <span class="cov8" title="1">{
+        localIndex := find(locals, name)
+        if localIndex &gt;= 0 </span><span class="cov8" title="1">{
+                return localTypes[localIndex]
+        }</span>
+        <span class="cov8" title="1">globalIndex := find(globals, name)
+        if globalIndex &gt;= 0 </span><span class="cov8" title="1">{
+                return globalTypes[globalIndex]
+        }</span>
+        <span class="cov0" title="0">error("identifier " + escape(name, "\"") + " not defined")
+        return 0</span>
+}
+
+func genSliceAssign(name string) <span class="cov8" title="1">{
+        typ := varType(name)
+        print("pop rax\n") // value (addr if string type)
+        if typ == typeSliceStr </span><span class="cov8" title="1">{
+                print("pop rbx\n") // value (len)
+                print("pop rcx\n") // index * 2
+                print("add rcx, rcx\n")
+        }</span> else<span class="cov8" title="1"> {
+                print("pop rcx\n")
+        }</span>
+        <span class="cov8" title="1">localIndex := find(locals, name)
+        if localIndex &gt;= 0 </span><span class="cov8" title="1">{
+                offset := localOffset(localIndex)
+                print("mov rdx, [rbp+" + itoa(offset) + "]\n")
+        }</span> else<span class="cov8" title="1"> {
+                print("mov rdx, [" + name + "]\n")
+        }</span>
+        <span class="cov8" title="1">print("mov [rdx+rcx*8], rax\n")
+        if typ == typeSliceStr </span><span class="cov8" title="1">{
+                print("mov [rdx+rcx*8+8], rbx\n")
+        }</span>
+}
+
+func genCall(name string) int <span class="cov8" title="1">{
+        print("call " + name + "\n")
+        index := find(funcs, name)
+        sigIndex := funcSigIndexes[index]
+        resultType := funcSigs[sigIndex]
+        if resultType == typeInt </span><span class="cov8" title="1">{
+                print("push rax\n")
+        }</span> else<span class="cov8" title="1"> if resultType == typeString </span><span class="cov8" title="1">{
+                print("push rbx\n")
+                print("push rax\n")
+        }</span> else<span class="cov8" title="1"> if resultType == typeSliceInt || resultType == typeSliceStr </span><span class="cov8" title="1">{
+                print("push rcx\n")
+                print("push rbx\n")
+                print("push rax\n")
+        }</span>
+        <span class="cov8" title="1">return resultType</span>
+}
+
+func genFuncStart(name string) <span class="cov8" title="1">{
+        print("\n")
+        print(name + ":\n")
+        print("push rbp\n")
+        print("mov rbp, rsp\n")
+        print("sub rsp, " + itoa(localSpace) + "\n")
+}</span>
+
+// Return size (in bytes) of current function's arguments.
+func argsSize() int <span class="cov8" title="1">{
+        i := find(funcs, curFunc)
+        sigIndex := funcSigIndexes[i]
+        numArgs := funcSigs[sigIndex+1]
+        size := 0
+        i = 0
+        for i &lt; numArgs </span><span class="cov8" title="1">{
+                size = size + typeSize(funcSigs[sigIndex+2+i])
+                i = i + 1
+        }</span>
+        <span class="cov8" title="1">return size</span>
+}
+
+// Return size (in bytes) of current function's locals (excluding arguments).
+func localsSize() int <span class="cov8" title="1">{
+        i := find(funcs, curFunc)
+        sigIndex := funcSigIndexes[i]
+        numArgs := funcSigs[sigIndex+1]
+        size := 0
+        i = numArgs
+        for i &lt; len(locals) </span><span class="cov8" title="1">{
+                size = size + typeSize(localTypes[i])
+                i = i + 1
+        }</span>
+        <span class="cov8" title="1">return size</span>
+}
+
+func genFuncEnd() <span class="cov8" title="1">{
+        size := localsSize()
+        if size &gt; localSpace </span><span class="cov0" title="0">{
+                error(curFunc + "'s locals too big (" + itoa(size) + " &gt; " + itoa(localSpace) + ")\n")
+        }</span>
+        <span class="cov8" title="1">print("mov rsp, rbp\n")
+        print("pop rbp\n")
+        size = argsSize()
+        if size &gt; 0 </span><span class="cov8" title="1">{
+                print("ret " + itoa(size) + "\n")
+        }</span> else<span class="cov8" title="1"> {
+                print("ret\n")
+        }</span>
+}
+
+func genDataSections() <span class="cov8" title="1">{
+        print("\n")
+        print("section .data\n")
+        print("_strOutOfMem: db `out of memory\\n`\n")
+
+        // String constants
+        i := 0
+        for i &lt; len(strs) </span><span class="cov8" title="1">{
+                print("str" + itoa(i) + ": db " + escape(strs[i], "`") + "\n")
+                i = i + 1
+        }</span>
+
+        // Global variables
+        <span class="cov8" title="1">print("align 8\n")
+        i = 0
+        for i &lt; len(globals) </span><span class="cov8" title="1">{
+                typ := globalTypes[i]
+                if typ == typeInt </span><span class="cov8" title="1">{
+                        print(globals[i] + ": dq 0\n")
+                }</span> else<span class="cov8" title="1"> if typ == typeString </span><span class="cov8" title="1">{
+                        print(globals[i] + ": dq 0, 0\n") // string: address, length
+                }</span> else<span class="cov8" title="1"> {
+                        print(globals[i] + ": dq 0, 0, 0\n") // slice: address, length, capacity
+                }</span>
+                <span class="cov8" title="1">i = i + 1</span>
+        }
+
+        // "Heap" (used for strings and slice appends)
+        <span class="cov8" title="1">print("\n")
+        print("section .bss\n")
+        print("_heapPtr: resq 1\n")
+        print("_heap: resb " + itoa(heapSize) + "\n")
+        print("_heapEnd:\n")</span>
+}
+
+func genUnary(op int, typ int) <span class="cov8" title="1">{
+        if typ != typeInt </span><span class="cov0" title="0">{
+                error("unary operator not allowed on type " + typeName(typ))
+        }</span>
+        <span class="cov8" title="1">print("pop rax\n")
+        if op == tMinus </span><span class="cov8" title="1">{
+                print("neg rax\n")
+        }</span> else<span class="cov8" title="1"> if op == tNot </span><span class="cov8" title="1">{
+                print("cmp rax, 0\n")
+                print("mov rax, 0\n")
+                print("setz al\n")
+        }</span>
+        <span class="cov8" title="1">print("push rax\n")</span>
+}
+
+func genBinaryString(op int) int <span class="cov8" title="1">{
+        if op == tPlus </span><span class="cov8" title="1">{
+                print("call _strAdd\n")
+                print("push rbx\n")
+                print("push rax\n")
+                return typeString
+        }</span> else<span class="cov8" title="1"> if op == tEq </span><span class="cov8" title="1">{
+                print("call _strEq\n")
+                print("push rax\n")
+                return typeInt
+        }</span> else<span class="cov8" title="1"> if op == tNotEq </span><span class="cov8" title="1">{
+                print("call _strEq\n")
+                print("cmp rax, 0\n")
+                print("mov rax, 0\n")
+                print("setz al\n")
+                print("push rax\n")
+                return typeInt
+        }</span> else<span class="cov0" title="0"> {
+                error("operator " + tokenName(op) + " not allowed on strings")
+                return 0
+        }</span>
+}
+
+func genBinaryInt(op int) int <span class="cov8" title="1">{
+        print("pop rbx\n")
+        print("pop rax\n")
+        if op == tPlus </span><span class="cov8" title="1">{
+                print("add rax, rbx\n")
+        }</span> else<span class="cov8" title="1"> if op == tMinus </span><span class="cov8" title="1">{
+                print("sub rax, rbx\n")
+        }</span> else<span class="cov8" title="1"> if op == tTimes </span><span class="cov8" title="1">{
+                print("imul rbx\n")
+        }</span> else<span class="cov8" title="1"> if op == tDivide </span><span class="cov8" title="1">{
+                print("cqo\n")
+                print("idiv rbx\n")
+        }</span> else<span class="cov8" title="1"> if op == tModulo </span><span class="cov8" title="1">{
+                print("cqo\n")
+                print("idiv rbx\n")
+                print("mov rax, rdx\n")
+        }</span> else<span class="cov8" title="1"> if op == tEq </span><span class="cov8" title="1">{
+                print("cmp rax, rbx\n")
+                print("mov rax, 0\n")
+                print("sete al\n")
+        }</span> else<span class="cov8" title="1"> if op == tNotEq </span><span class="cov8" title="1">{
+                print("cmp rax, rbx\n")
+                print("mov rax, 0\n")
+                print("setne al\n")
+        }</span> else<span class="cov8" title="1"> if op == tLess </span><span class="cov8" title="1">{
+                print("cmp rax, rbx\n")
+                print("mov rax, 0\n")
+                print("setl al\n")
+        }</span> else<span class="cov8" title="1"> if op == tLessEq </span><span class="cov8" title="1">{
+                print("cmp rax, rbx\n")
+                print("mov rax, 0\n")
+                print("setle al\n")
+        }</span> else<span class="cov8" title="1"> if op == tGreater </span><span class="cov8" title="1">{
+                print("cmp rax, rbx\n")
+                print("mov rax, 0\n")
+                print("setg al\n")
+        }</span> else<span class="cov8" title="1"> if op == tGreaterEq </span><span class="cov8" title="1">{
+                print("cmp rax, rbx\n")
+                print("mov rax, 0\n")
+                print("setge al\n")
+        }</span> else<span class="cov8" title="1"> if op == tAnd </span><span class="cov8" title="1">{
+                print("and rax, rbx\n")
+        }</span> else<span class="cov8" title="1"> if op == tOr </span><span class="cov8" title="1">{
+                print("or rax, rbx\n")
+        }</span>
+        <span class="cov8" title="1">print("push rax\n")
+        return typeInt</span>
+}
+
+func genBinary(op int, typ1 int, typ2 int) int <span class="cov8" title="1">{
+        if typ1 != typ2 </span><span class="cov0" title="0">{
+                error("binary operands must be the same type")
+        }</span>
+        <span class="cov8" title="1">if typ1 == typeString </span><span class="cov8" title="1">{
+                return genBinaryString(op)
+        }</span> else<span class="cov8" title="1"> {
+                return genBinaryInt(op)
+        }</span>
+}
+
+func genReturn(typ int) <span class="cov8" title="1">{
+        if typ == typeInt </span><span class="cov8" title="1">{
+                print("pop rax\n")
+        }</span> else<span class="cov8" title="1"> if typ == typeString </span><span class="cov8" title="1">{
+                print("pop rax\n")
+                print("pop rbx\n")
+        }</span> else<span class="cov8" title="1"> if typ == typeSliceInt || typ == typeSliceStr </span><span class="cov8" title="1">{
+                print("pop rax\n")
+                print("pop rbx\n")
+                print("pop rcx\n")
+        }</span>
+        <span class="cov8" title="1">genFuncEnd()</span>
+}
+
+func genJumpIfZero(label string) <span class="cov8" title="1">{
+        print("pop rax\n")
+        print("cmp rax, 0\n")
+        print("jz " + label + "\n")
+}</span>
+
+func genJump(label string) <span class="cov8" title="1">{
+        print("jmp " + label + "\n")
+}</span>
+
+func genLabel(label string) <span class="cov8" title="1">{
+        print("\n")
+        print(label + ":\n")
+}</span>
+
+func genDiscard(typ int) <span class="cov8" title="1">{
+        size := typeSize(typ)
+        if size &gt; 0 </span><span class="cov8" title="1">{
+                print("add rsp, " + itoa(typeSize(typ)) + "\n")
+        }</span>
+}
+
+func genSliceExpr() <span class="cov8" title="1">{
+        // Slice expression of form slice[:max]
+        print("pop rax\n")  // max
+        print("pop rbx\n")  // addr
+        print("pop rcx\n")  // old length (capacity remains same)
+        print("push rax\n") // new length
+        print("push rbx\n") // addr remains same
+}</span>
+
+func genSliceFetch(typ int) int <span class="cov8" title="1">{
+        if typ == typeString </span><span class="cov8" title="1">{
+                print("pop rax\n") // index
+                print("pop rbx\n") // addr
+                print("pop rcx\n") // len
+                print("xor rdx, rdx\n")
+                print("mov dl, [rbx+rax]\n")
+                print("push rdx\n")
+                return typeInt
+        }</span> else<span class="cov8" title="1"> if typ == typeSliceInt </span><span class="cov8" title="1">{
+                print("pop rax\n") // index
+                print("pop rbx\n") // addr
+                print("pop rcx\n") // len
+                print("pop rdx\n") // cap
+                print("push qword [rbx+rax*8]\n")
+                return typeInt
+        }</span> else<span class="cov8" title="1"> if typ == typeSliceStr </span><span class="cov8" title="1">{
+                print("pop rax\n") // index
+                print("pop rbx\n") // addr
+                print("pop rcx\n") // len
+                print("pop rdx\n") // cap
+                print("add rax, rax\n")
+                print("push qword [rbx+rax*8+8]\n")
+                print("push qword [rbx+rax*8]\n")
+                return typeString
+        }</span> else<span class="cov0" title="0"> {
+                error("invalid slice type " + typeName(typ))
+                return 0
+        }</span>
+}
+
+// Recursive-descent parser
+
+func expect(expected int, msg string) <span class="cov8" title="1">{
+        if token != expected </span><span class="cov0" title="0">{
+                error("expected " + msg + " not " + tokenName(token))
+        }</span>
+        <span class="cov8" title="1">next()</span>
+}
+
+func Literal() int <span class="cov8" title="1">{
+        if token == tIntLit </span><span class="cov8" title="1">{
+                genIntLit(tokenInt)
+                next()
+                return typeInt
+        }</span> else<span class="cov8" title="1"> if token == tStrLit </span><span class="cov8" title="1">{
+                genStrLit(tokenStr)
+                next()
+                return typeString
+        }</span> else<span class="cov0" title="0"> {
+                error("expected integer or string literal")
+                return 0
+        }</span>
+}
+
+func identifier(msg string) <span class="cov8" title="1">{
+        expect(tIdent, msg)
+}</span>
+
+func Operand() int <span class="cov8" title="1">{
+        if token == tIntLit || token == tStrLit </span><span class="cov8" title="1">{
+                return Literal()
+        }</span> else<span class="cov8" title="1"> if token == tIdent </span><span class="cov8" title="1">{
+                name := tokenStr
+                identifier("identifier")
+                return genIdentifier(name)
+        }</span> else<span class="cov0" title="0"> {
+                error("expected literal or identifier")
+                return 0
+        }</span>
+}
+
+func ExpressionList() int <span class="cov8" title="1">{
+        firstType := Expression()
+        for token == tComma </span><span class="cov8" title="1">{
+                next()
+                Expression()
+        }</span>
+        <span class="cov8" title="1">return firstType</span>
+}
+
+func Arguments() int <span class="cov8" title="1">{
+        funcName := tokenStr // function name will still be in tokenStr
+        expect(tLParen, "(")
+        arg1Type := typeVoid
+        if token != tRParen </span><span class="cov8" title="1">{
+                arg1Type = ExpressionList()
+        }</span>
+        <span class="cov8" title="1">expect(tRParen, ")")
+
+        // Replace "generic" built-in functions with type-specific versions
+        if funcName == "append" </span><span class="cov8" title="1">{
+                if arg1Type == typeSliceInt </span><span class="cov8" title="1">{
+                        funcName = "_appendInt"
+                }</span> else<span class="cov8" title="1"> if arg1Type == typeSliceStr </span><span class="cov8" title="1">{
+                        funcName = "_appendString"
+                }</span> else<span class="cov0" title="0"> {
+                        error("can't append to " + typeName(arg1Type))
+                }</span>
+        } else<span class="cov8" title="1"> if funcName == "len" </span><span class="cov8" title="1">{
+                if arg1Type == typeString </span><span class="cov8" title="1">{
+                        funcName = "len"
+                }</span> else<span class="cov8" title="1"> if arg1Type == typeSliceInt || arg1Type == typeSliceStr </span><span class="cov8" title="1">{
+                        funcName = "_lenSlice"
+                }</span> else<span class="cov0" title="0"> {
+                        error("can't get length of " + typeName(arg1Type))
+                }</span>
+        }
+        <span class="cov8" title="1">return genCall(funcName)</span>
+}
+
+func indexExpr() <span class="cov8" title="1">{
+        typ := Expression()
+        if typ != typeInt </span><span class="cov0" title="0">{
+                error("slice index must be int")
+        }</span>
+}
+
+func PrimaryExpr() int <span class="cov8" title="1">{
+        typ := Operand()
+        if token == tLParen </span><span class="cov8" title="1">{
+                return Arguments()
+        }</span> else<span class="cov8" title="1"> if token == tLBracket </span><span class="cov8" title="1">{
+                next()
+                if token == tColon </span><span class="cov8" title="1">{
+                        if typ != typeSliceInt &amp;&amp; typ != typeSliceStr </span><span class="cov0" title="0">{
+                                error("slice expression requires slice type")
+                        }</span>
+                        <span class="cov8" title="1">next()
+                        indexExpr()
+                        expect(tRBracket, "]")
+                        genSliceExpr()
+                        return typ</span>
+                }
+                <span class="cov8" title="1">indexExpr()
+                expect(tRBracket, "]")
+                return genSliceFetch(typ)</span>
+        }
+        <span class="cov8" title="1">return typ</span>
+}
+
+func UnaryExpr() int <span class="cov8" title="1">{
+        if token == tPlus || token == tMinus || token == tNot </span><span class="cov8" title="1">{
+                op := token
+                next()
+                typ := UnaryExpr()
+                genUnary(op, typ)
+                return typ
+        }</span>
+        <span class="cov8" title="1">return PrimaryExpr()</span>
+}
+
+func mulExpr() int <span class="cov8" title="1">{
+        typ := UnaryExpr()
+        for token == tTimes || token == tDivide || token == tModulo </span><span class="cov8" title="1">{
+                op := token
+                next()
+                typRight := UnaryExpr()
+                typ = genBinary(op, typ, typRight)
+        }</span>
+        <span class="cov8" title="1">return typ</span>
+}
+
+func addExpr() int <span class="cov8" title="1">{
+        typ := mulExpr()
+        for token == tPlus || token == tMinus </span><span class="cov8" title="1">{
+                op := token
+                next()
+                typRight := mulExpr()
+                typ = genBinary(op, typ, typRight)
+        }</span>
+        <span class="cov8" title="1">return typ</span>
+}
+
+func comparisonExpr() int <span class="cov8" title="1">{
+        typ := addExpr()
+        for token == tEq || token == tNotEq || token == tLess || token == tLessEq ||
+                token == tGreater || token == tGreaterEq </span><span class="cov8" title="1">{
+                op := token
+                next()
+                typRight := addExpr()
+                typ = genBinary(op, typ, typRight)
+        }</span>
+        <span class="cov8" title="1">return typ</span>
+}
+
+func andExpr() int <span class="cov8" title="1">{
+        typ := comparisonExpr()
+        for token == tAnd </span><span class="cov8" title="1">{
+                op := token
+                next()
+                typRight := comparisonExpr()
+                typ = genBinary(op, typ, typRight)
+        }</span>
+        <span class="cov8" title="1">return typ</span>
+}
+
+func orExpr() int <span class="cov8" title="1">{
+        typ := andExpr()
+        for token == tOr </span><span class="cov8" title="1">{
+                op := token
+                next()
+                typRight := andExpr()
+                typ = genBinary(op, typ, typRight)
+        }</span>
+        <span class="cov8" title="1">return typ</span>
+}
+
+func Expression() int <span class="cov8" title="1">{
+        return orExpr()
+}</span>
+
+func PackageClause() <span class="cov8" title="1">{
+        expect(tPackage, "\"package\"")
+        identifier("package identifier")
+}</span>
+
+func Type() int <span class="cov8" title="1">{
+        if token == tLBracket </span><span class="cov8" title="1">{
+                next()
+                expect(tRBracket, "]")
+                name := tokenStr
+                identifier("\"int\" or \"string\"")
+                if name == "int" || name == "bool" </span><span class="cov8" title="1">{
+                        return typeSliceInt
+                }</span> else<span class="cov8" title="1"> if name == "string" </span><span class="cov8" title="1">{
+                        return typeSliceStr
+                }</span> else<span class="cov0" title="0"> {
+                        error("only []int and []string are supported")
+                }</span>
+        }
+        <span class="cov8" title="1">name := tokenStr
+        identifier("\"int\" or \"string\"")
+        if name == "int" || name == "bool" </span><span class="cov8" title="1">{
+                return typeInt
+        }</span> else<span class="cov8" title="1"> if name == "string" </span><span class="cov8" title="1">{
+                return typeString
+        }</span> else<span class="cov0" title="0"> {
+                error("only int and string are supported")
+        }</span>
+        <span class="cov0" title="0">return typeVoid</span>
+}
+
+func defineLocal(typ int, name string) <span class="cov8" title="1">{
+        locals = append(locals, name)
+        localTypes = append(localTypes, typ)
+}</span>
+
+func VarSpec() <span class="cov8" title="1">{
+        // We only support a single identifier, not a list
+        varName := tokenStr
+        identifier("variable identifier")
+        typ := Type()
+        if curFunc != "" </span><span class="cov0" title="0">{
+                error("\"var\" not supported inside functions")
+        }</span>
+        <span class="cov8" title="1">globals = append(globals, varName)
+        globalTypes = append(globalTypes, typ)
+        if token == tAssign </span><span class="cov0" title="0">{
+                error("assignment not supported for top-level var")
+        }</span>
+}
+
+func VarDecl() <span class="cov8" title="1">{
+        expect(tVar, "\"var\"")
+        expect(tLParen, "(")
+        for token != tRParen </span><span class="cov8" title="1">{
+                VarSpec()
+                expect(tSemicolon, ";")
+        }</span>
+        <span class="cov8" title="1">expect(tRParen, ")")</span>
+}
+
+func ConstSpec() <span class="cov8" title="1">{
+        // We only support typed integer constants
+        name := tokenStr
+        consts = append(consts, name)
+        identifier("variable identifier")
+        typ := Type()
+        if typ != typeInt </span><span class="cov0" title="0">{
+                error("constants must be typed int")
+        }</span>
+        <span class="cov8" title="1">expect(tAssign, "=")
+        value := tokenInt
+        expect(tIntLit, "integer literal")
+        genConst(name, value)</span>
+}
+
+func ConstDecl() <span class="cov8" title="1">{
+        expect(tConst, "\"const\"")
+        expect(tLParen, "(")
+        for token != tRParen </span><span class="cov8" title="1">{
+                ConstSpec()
+                expect(tSemicolon, ";")
+        }</span>
+        <span class="cov8" title="1">expect(tRParen, ")")</span>
+}
+
+func ParameterDecl() <span class="cov8" title="1">{
+        paramName := tokenStr
+        identifier("parameter name")
+        typ := Type()
+        defineLocal(typ, paramName)
+        funcSigs = append(funcSigs, typ)
+        resultIndex := funcSigIndexes[len(funcSigIndexes)-1]
+        funcSigs[resultIndex+1] = funcSigs[resultIndex+1] + 1 // increment numArgs
+}</span>
+
+func ParameterList() <span class="cov8" title="1">{
+        ParameterDecl()
+        for token == tComma </span><span class="cov8" title="1">{
+                next()
+                ParameterDecl()
+        }</span>
+}
+
+func Parameters() <span class="cov8" title="1">{
+        expect(tLParen, "(")
+        if token != tRParen </span><span class="cov8" title="1">{
+                ParameterList()
+        }</span>
+        <span class="cov8" title="1">expect(tRParen, ")")</span>
+}
+
+func Signature() <span class="cov8" title="1">{
+        funcSigs = append(funcSigs, typeVoid) // space for result type
+        funcSigs = append(funcSigs, 0)        // space for numArgs
+        Parameters()
+        if token != tLBrace </span><span class="cov8" title="1">{
+                typ := Type()
+                resultIndex := funcSigIndexes[len(funcSigIndexes)-1]
+                funcSigs[resultIndex] = typ // set result type
+        }</span>
+}
+
+func SimpleStmt() <span class="cov8" title="1">{
+        // Funky parsing here to handle assignments
+        identName := tokenStr
+        expect(tIdent, "assignment or call statement")
+        if token == tAssign </span><span class="cov8" title="1">{
+                next()
+                lhsType := varType(identName)
+                rhsType := Expression()
+                if lhsType != rhsType </span><span class="cov0" title="0">{
+                        error("can't assign " + typeName(rhsType) + " to " +
+                                typeName(lhsType))
+                }</span>
+                <span class="cov8" title="1">genAssign(identName)</span>
+        } else<span class="cov8" title="1"> if token == tDeclAssign </span><span class="cov8" title="1">{
+                next()
+                typ := Expression()
+                defineLocal(typ, identName)
+                genAssign(identName)
+        }</span> else<span class="cov8" title="1"> if token == tLParen </span><span class="cov8" title="1">{
+                genIdentifier(identName)
+                typ := Arguments()
+                genDiscard(typ) // discard return value
+        }</span> else<span class="cov8" title="1"> if token == tLBracket </span><span class="cov8" title="1">{
+                next()
+                indexExpr()
+                expect(tRBracket, "]")
+                expect(tAssign, "=")
+                Expression()
+                genSliceAssign(identName)
+        }</span> else<span class="cov0" title="0"> {
+                error("expected assignment or call not " + tokenName(token))
+        }</span>
+}
+
+func ReturnStmt() <span class="cov8" title="1">{
+        expect(tReturn, "\"return\"")
+        if token != tSemicolon </span><span class="cov8" title="1">{
+                typ := Expression()
+                genReturn(typ)
+        }</span> else<span class="cov8" title="1"> {
+                genReturn(typeVoid)
+        }</span>
+}
+
+func newLabel() string <span class="cov8" title="1">{
+        labelNum = labelNum + 1
+        return "label" + itoa(labelNum)
+}</span>
+
+func IfStmt() <span class="cov8" title="1">{
+        expect(tIf, "\"if\"")
+        Expression()
+        ifLabel := newLabel()
+        genJumpIfZero(ifLabel) // jump to else or end of if block
+        Block()
+        if token == tElse </span><span class="cov8" title="1">{
+                next()
+                elseLabel := newLabel()
+                genJump(elseLabel) // jump past else block
+                genLabel(ifLabel)
+                if token == tIf </span><span class="cov8" title="1">{
+                        IfStmt()
+                }</span> else<span class="cov8" title="1"> {
+                        Block()
+                }</span>
+                <span class="cov8" title="1">genLabel(elseLabel)</span>
+        } else<span class="cov8" title="1"> {
+                genLabel(ifLabel)
+        }</span>
+}
+
+func ForStmt() <span class="cov8" title="1">{
+        expect(tFor, "\"for\"")
+        loopLabel := newLabel()
+        genLabel(loopLabel) // top of loop
+        Expression()
+        doneLabel := newLabel()
+        genJumpIfZero(doneLabel) // jump to after loop if done
+        Block()
+        genJump(loopLabel) // go back to top of loop
+        genLabel(doneLabel)
+}</span>
+
+func Statement() <span class="cov8" title="1">{
+        if token == tIf </span><span class="cov8" title="1">{
+                IfStmt()
+        }</span> else<span class="cov8" title="1"> if token == tFor </span><span class="cov8" title="1">{
+                ForStmt()
+        }</span> else<span class="cov8" title="1"> if token == tReturn </span><span class="cov8" title="1">{
+                ReturnStmt()
+        }</span> else<span class="cov8" title="1"> {
+                SimpleStmt()
+        }</span>
+}
+
+func StatementList() <span class="cov8" title="1">{
+        for token != tRBrace </span><span class="cov8" title="1">{
+                Statement()
+                expect(tSemicolon, ";")
+        }</span>
+}
+
+func Block() <span class="cov8" title="1">{
+        expect(tLBrace, "{")
+        StatementList()
+        expect(tRBrace, "}")
+}</span>
+
+func FunctionBody() <span class="cov8" title="1">{
+        Block()
+}</span>
+
+func FunctionDecl() <span class="cov8" title="1">{
+        expect(tFunc, "\"func\"")
+        curFunc = tokenStr
+        genFuncStart(tokenStr)
+        funcs = append(funcs, tokenStr)
+        funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+        identifier("function name")
+        Signature()
+        FunctionBody()
+        genFuncEnd()
+        locals = locals[:0]
+        localTypes = localTypes[:0]
+        curFunc = ""
+}</span>
+
+func TopLevelDecl() <span class="cov8" title="1">{
+        if token == tVar </span><span class="cov8" title="1">{
+                VarDecl()
+        }</span> else<span class="cov8" title="1"> if token == tConst </span><span class="cov8" title="1">{
+                // ConstDecl only supported at top level
+                ConstDecl()
+        }</span> else<span class="cov8" title="1"> if token == tFunc </span><span class="cov8" title="1">{
+                FunctionDecl()
+        }</span> else<span class="cov0" title="0"> {
+                error("expected \"var\", \"const\", or \"func\"")
+        }</span>
+}
+
+func SourceFile() <span class="cov8" title="1">{
+        PackageClause()
+        expect(tSemicolon, ";")
+
+        for token == tVar || token == tFunc || token == tConst </span><span class="cov8" title="1">{
+                TopLevelDecl()
+                expect(tSemicolon, ";")
+        }</span>
+
+        <span class="cov8" title="1">expect(tEOF, "end of file")</span>
+}
+
+func addFunc(name string, resultType int, numArgs int, arg1Type int, arg2Type int) <span class="cov8" title="1">{
+        funcs = append(funcs, name)
+        funcSigIndexes = append(funcSigIndexes, len(funcSigs))
+        funcSigs = append(funcSigs, resultType)
+        funcSigs = append(funcSigs, numArgs)
+        if numArgs &gt; 0 </span><span class="cov8" title="1">{
+                funcSigs = append(funcSigs, arg1Type)
+        }</span>
+        <span class="cov8" title="1">if numArgs &gt; 1 </span><span class="cov8" title="1">{
+                funcSigs = append(funcSigs, arg2Type)
+        }</span>
+}
+
+func addToken(name string) <span class="cov8" title="1">{
+        tokens = append(tokens, name)
+}</span>
+
+func addType(name string, size int) <span class="cov8" title="1">{
+        types = append(types, name)
+        typeSizes = append(typeSizes, size)
+}</span>
+
+// Test constructs not used in compiler itself.
+var (
+        testSlice []string
+)
+
+func testAppend(sl []string, s string) []string <span class="cov8" title="1">{
+        return append(testSlice, s)
+}</span>
+
+func testUnused() <span class="cov8" title="1">{
+        sl := testSlice
+        sl = testAppend(sl, "one") // test returning a slice
+        sl[0] = "two"
+        if sl[0] != "two" </span><span class="cov0" title="0">{
+                error("fail: string slice assignment")
+        }</span>
+        <span class="cov8" title="1">t := 0 == 0
+        f := 0 == 1
+        if !t || !!f </span><span class="cov0" title="0">{
+                error("fail: not operator")
+        }</span>
+}
+
+func main() <span class="cov8" title="1">{
+        // Builtin functions (defined in genProgramStart; Go versions in gofuncs.go)
+        addFunc("print", typeVoid, 1, typeString, 0)
+        addFunc("log", typeVoid, 1, typeString, 0)
+        addFunc("getc", typeInt, 0, 0, 0)
+        addFunc("exit", typeVoid, 1, typeInt, 0)
+        addFunc("char", typeString, 1, typeInt, 0)
+        addFunc("len", typeInt, 1, typeString, 0)
+        addFunc("_lenSlice", typeInt, 1, typeSliceInt, 0) // works with typeSliceStr too
+        addFunc("int", typeInt, 1, typeInt, 0)
+        addFunc("append", typeSliceInt, 2, typeSliceInt, typeInt)
+        addFunc("_appendInt", typeSliceInt, 2, typeSliceInt, typeInt)
+        addFunc("_appendString", typeSliceStr, 2, typeSliceStr, typeString)
+
+        // Forward references
+        addFunc("Expression", typeInt, 0, 0, 0)
+        addFunc("Block", typeVoid, 0, 0, 0)
+
+        // Token names
+        addToken("") // token 0 is not valid
+        addToken("if")
+        addToken("else")
+        addToken("for")
+        addToken("var")
+        addToken("const")
+        addToken("func")
+        addToken("return")
+        addToken("package")
+        addToken("integer")
+        addToken("string")
+        addToken("identifier")
+        addToken("EOF")
+        addToken("||")
+        addToken("&amp;&amp;")
+        addToken("==")
+        addToken("!=")
+        addToken("&lt;=")
+        addToken("&gt;=")
+        addToken(":=")
+
+        // Type names and sizes
+        addType("", 0) // type 0 is not valid
+        addType("void", 0)
+        addType("int", 8)
+        addType("string", 16)
+        addType("[]int", 24)
+        addType("[]string", 24)
+
+        testUnused()
+
+        genProgramStart()
+
+        line = 1
+        col = 0
+        nextChar()
+        next()
+        SourceFile()
+
+        genDataSections()
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

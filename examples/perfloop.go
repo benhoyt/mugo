@@ -1,7 +1,7 @@
 package main
 
 var (
-	sum int
+	sum int // global so Go doesn't optimize it out
 )
 
 func main() {

@@ -32,7 +32,7 @@ mugo3:
 coverage:
 	go test -c -o build/mugo_test -cover
 	build/mugo_test -test.coverprofile build/coverage.out <mugo.go >/dev/null
-	go tool cover -html build/coverage.out -o build/coverage.html
+	go tool cover -html build/coverage.out -o coverage.html
 
 perfloop:
 	go build -o build/perfloop-go examples/perfloop.go
@@ -41,4 +41,4 @@ perfloop:
 	ld -o build/perfloop-mugo build/perfloop.o
 
 
-all: hello mugo mugo2 mugo3 coverage
+all: hello mugo mugo2 mugo3 coverage perfloop
