@@ -4,6 +4,7 @@
 .PHONY: mugo2
 .PHONY: mugo3
 .PHONY: coverage
+.PHONY: perfloop
 .PHONY: all
 
 hello:
@@ -32,5 +33,12 @@ coverage:
 	go test -c -o build/mugo_test -cover
 	build/mugo_test -test.coverprofile build/coverage.out <mugo.go >/dev/null
 	go tool cover -html build/coverage.out -o build/coverage.html
+
+perfloop:
+	go build -o build/perfloop-go examples/perfloop.go
+	go run . <examples/perfloop.go >build/perfloop.asm
+	nasm -felf64 -o build/perfloop.o build/perfloop.asm
+	ld -o build/perfloop-mugo build/perfloop.o
+
 
 all: hello mugo mugo2 mugo3 coverage

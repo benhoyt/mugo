@@ -1384,7 +1384,8 @@ func SimpleStmt() {
 		lhsType := varType(identName)
 		rhsType := Expression()
 		if lhsType != rhsType {
-			error("can't assign " + typeName(rhsType) + " to " + typeName(lhsType))
+			error("can't assign " + typeName(rhsType) + " to " +
+				typeName(lhsType))
 		}
 		genAssign(identName)
 	} else if token == tDeclAssign {
@@ -1404,7 +1405,7 @@ func SimpleStmt() {
 		Expression()
 		genSliceAssign(identName)
 	} else {
-		error("expected assignment or call statement not " + tokenName(token))
+		error("expected assignment or call not " + tokenName(token))
 	}
 }
 
