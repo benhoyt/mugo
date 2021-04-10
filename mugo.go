@@ -163,10 +163,10 @@ func next() {
 			}
 		} else if c == '\n' {
 			nextChar()
-			// Semicolon insertion: https://golang.org/ref/spec#Semicolons
+			// Semicolon insertion: golang.org/ref/spec#Semicolons
 			if token == tIdent || token == tIntLit || token == tStrLit ||
-				token == tReturn || token == tRParen || token == tRBracket ||
-				token == tRBrace {
+				token == tReturn || token == tRParen ||
+				token == tRBracket || token == tRBrace {
 				token = tSemicolon
 				return
 			}
@@ -277,8 +277,9 @@ func next() {
 	}
 
 	// Single-character tokens (token is ASCII value)
-	if c == '+' || c == '-' || c == '*' || c == '%' || c == ';' || c == ',' ||
-		c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']' {
+	if c == '+' || c == '-' || c == '*' || c == '%' || c == ';' ||
+		c == ',' || c == '(' || c == ')' || c == '{' || c == '}' ||
+		c == '[' || c == ']' {
 		token = c
 		nextChar()
 		return
@@ -851,7 +852,7 @@ func genFuncEnd() {
 	if size > localSpace {
 		error(curFunc + "'s locals too big (" + itoa(size) + " > " + itoa(localSpace) + ")\n")
 	}
-	print("add rsp, " + itoa(localSpace) + "\n")
+	print("mov rsp, rbp\n")
 	print("pop rbp\n")
 	size = argsSize()
 	if size > 0 {
