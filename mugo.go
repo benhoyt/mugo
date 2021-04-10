@@ -945,10 +945,10 @@ func genBinaryInt(op int) int {
 	} else if op == tTimes {
 		print("imul rbx\n")
 	} else if op == tDivide {
-		print("cdq\n")
+		print("cqo\n")
 		print("idiv rbx\n")
 	} else if op == tModulo {
-		print("cdq\n")
+		print("cqo\n")
 		print("idiv rbx\n")
 		print("mov rax, rdx\n")
 	} else if op == tEq {
