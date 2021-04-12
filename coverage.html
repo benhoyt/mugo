@@ -131,7 +131,7 @@ var (
         localTypes     []int
         funcs          []string // function names
         funcSigIndexes []int    // indexes into funcSigs
-        funcSigs       []int    // each func: retType N arg1Type ... argNType
+        funcSigs       []int    // for each func: retType N arg1Type ... argNType
         strs           []string // string constants
 )
 
@@ -923,7 +923,7 @@ func genFuncStart(name string) <span class="cov8" title="1">{
         print(name + ":\n")
         print("push rbp\n")
         print("mov rbp, rsp\n")
-        print("sub rsp, " + itoa(localSpace) + "\n")
+        print("sub rsp, " + itoa(localSpace) + "\n") // space for locals
 }</span>
 
 // Return size (in bytes) of current function's arguments.
