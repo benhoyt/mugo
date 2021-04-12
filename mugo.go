@@ -608,6 +608,14 @@ func genProgramStart() {
 	print("pop rbp\n")
 	print("ret 24\n")
 	print("\n")
+
+	print("_divideByZero:\n")
+	print("push qword 15\n") // len("divide by zero\n")
+	print("push _strDivideByZero\n")
+	print("call log\n")
+	print("push qword 1\n")
+	print("call exit\n")
+	print("\n")
 }
 
 func genConst(name string, value int) {
@@ -866,6 +874,7 @@ func genDataSections() {
 	print("\n")
 	print("section .data\n")
 	print("_strOutOfMem: db `out of memory\\n`\n")
+	print("_strDivideByZero: db `divide by zero\\n`\n")
 
 	// String constants
 	i := 0
@@ -945,6 +954,8 @@ func genBinaryInt(op int) int {
 	} else if op == tTimes {
 		print("imul rbx\n")
 	} else if op == tDivide {
+		print("cmp rbx, 0\n")
+		print("jz _divideByZero\n")
 		print("cqo\n")
 		print("idiv rbx\n")
 	} else if op == tModulo {
