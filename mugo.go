@@ -816,7 +816,7 @@ func genFuncStart(name string) {
 	print(name + ":\n")
 	print("push rbp\n")
 	print("mov rbp, rsp\n")
-	print("sub rsp, " + itoa(localSpace) + "\n")
+	print("sub rsp, " + itoa(localSpace) + "\n") // space for locals
 }
 
 // Return size (in bytes) of current function's arguments.
